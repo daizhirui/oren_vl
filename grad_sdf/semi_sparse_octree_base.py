@@ -14,7 +14,7 @@ octree. The buffers store the octree structure:
 from abc import ABC, abstractmethod
 
 from grad_sdf import torch
-from grad_sdf.ga_trilinear import ga_trilinear
+from grad_sdf.ga_trilinear import ga_trilinear, trilinear_interpolation
 from grad_sdf.octree_config import OctreeConfig
 
 
@@ -33,6 +33,12 @@ class SemiSparseOctreeBase(torch.nn.Module, ABC):
             torch.zeros((self.cfg.init_voxel_num, 3), dtype=torch.float32),
             requires_grad=True,
         )
+
+        if self.cfg.residual_feature_dim > 0:
+            self.residual_features = torch.nn.Parameter(
+                torch.zeros((self.cfg.init_voxel_num, self.cfg.residual_feature_dim), dtype=torch.float32),
+                requires_grad=True,
+            )
 
         self.ever_inserted = False
 
@@ -168,7 +174,20 @@ class SemiSparseOctreeBase(torch.nn.Module, ABC):
             gradient_augmentation=self.cfg.gradient_augmentation,
             little_endian=self.little_endian_vertex_order,
         )
-        return sdf_preds, voxel_indices
+
+        if self.cfg.residual_feature_dim > 0:
+            per_point_vertex_residual_features = self.residual_features[
+                vertex_indices
+            ]  # (n_points, 8, residual_feature_dim)
+            residual_features = trilinear_interpolation(
+                points=points,
+                per_point_vertex_values=per_point_vertex_residual_features,
+                little_endian=self.little_endian_vertex_order,
+            )
+        else:
+            residual_features = None
+
+        return sdf_preds, residual_features, voxel_indices
 
     @property
     @abstractmethod

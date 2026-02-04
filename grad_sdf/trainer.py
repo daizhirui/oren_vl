@@ -229,24 +229,7 @@ class Trainer:
                 voxel_indices_plus = self.find_voxel_indices(offset_points_plus)  # (n, m, 3)
                 voxel_indices_minus = self.find_voxel_indices(offset_points_minus)  # (n, m, 3)
         with self.timer_find_voxel_indices_sampled_xyz:
-            if frame.stamp == 499:
-                print(f"frame.stamp: {frame.stamp}")
-                print(f"self.samples.sampled_xyz.shape: {self.samples.sampled_xyz.shape}")
-                print(f"self.samples.sampled_xyz.min(): {self.samples.sampled_xyz.min()}")
-                print(f"self.samples.sampled_xyz.max(): {self.samples.sampled_xyz.max()}")
             voxel_indices = self.find_voxel_indices(self.samples.sampled_xyz)  # (n, m)
-
-        # 打印voxel_indices的统计信息
-        num_total = voxel_indices.numel()
-        num_ge0 = (voxel_indices >= 0).sum().item()
-        ratio_ge0 = num_ge0 / num_total if num_total > 0 else 0.0
-
-        print(
-            "\n" f"voxel_indices.shape: {voxel_indices.shape}",
-            f"voxel_indices.min(): {voxel_indices.min()}",
-            f"voxel_indices.max(): {voxel_indices.max()}",
-            f"ratio of indices >= 0: {ratio_ge0:.4f}",
-        )
 
         bs = int(self.cfg.batch_size / self.samples.sampled_xyz.shape[1])
 
@@ -256,7 +239,9 @@ class Trainer:
                 with torch.enable_grad():
                     self.optimizer.zero_grad()
                     sdf_pred_all = []
+                    sdf_prior_all = []
                     sdf_grad_all = []
+                    sdf_prior_grad_all = []
                     for i in range(0, num_rays, bs):
                         j = min(i + bs, num_rays)
                         points = self.samples.sampled_xyz[i:j]  # (b, m, 3)
@@ -264,28 +249,37 @@ class Trainer:
                         _, sdf_prior, sdf_residual, sdf_pred = self.model(points, voxel_indices_batch)
                         if self.cfg.grad_method == "autodiff":
                             sdf_grad = self.compute_sdf_grad_autodiff(points, sdf_pred)
+                            sdf_prior_grad = self.compute_sdf_grad_autodiff(points, sdf_prior)
                         else:
-                            sdf_grad = self.compute_sdf_grad_finite_difference(
+                            sdf_grad, sdf_prior_grad = self.compute_sdf_grad_finite_difference(
                                 points=points,
                                 offset_points_plus=offset_points_plus[i:j],
                                 offset_points_minus=offset_points_minus[i:j],
                                 voxel_indices_plus=voxel_indices_plus[i:j],
                                 voxel_indices_minus=voxel_indices_minus[i:j],
-                            )[0]
+                            )[:2]
 
-                        sdf_pred_all.append(sdf_pred)  # (b, m)
+                        sdf_pred_all.append(sdf_pred)
+                        sdf_prior_all.append(sdf_prior)  # (b, m)
                         sdf_grad_all.append(sdf_grad)  # (b, m, 3)
+                        sdf_prior_grad_all.append(sdf_prior_grad)  # (b, m, 3)
 
                     if len(sdf_pred_all) == 1:
                         sdf_pred_all = sdf_pred_all[0]
+                        sdf_prior_all = sdf_prior_all[0]
                         sdf_grad_all = sdf_grad_all[0]
+                        sdf_prior_grad_all = sdf_prior_grad_all[0]
                     else:
                         sdf_pred_all = torch.cat(sdf_pred_all, dim=0)
+                        sdf_prior_all = torch.cat(sdf_prior_all, dim=0)
                         sdf_grad_all = torch.cat(sdf_grad_all, dim=0)
+                        sdf_prior_grad_all = torch.cat(sdf_prior_grad_all, dim=0)
 
                     loss, self.loss_dict = self.criterion(
                         pred_sdf=sdf_pred_all,
+                        pred_prior=sdf_prior_all,
                         pred_grad=sdf_grad_all,
+                        pred_prior_grad=sdf_prior_grad_all,
                         gt_sdf_perturb=self.samples.perturbation_sdf,
                         gt_sdf_stratified=self.samples.stratified_sdf,
                     )
@@ -359,6 +353,7 @@ class Trainer:
 
         Returns:
             (..., 3) gradient of the SDF at the given points
+            (..., 3) gradient of the SDF prior at the given points
             (..., 3, 3) offset_points_plus
             (..., 3, 3) offset_points_minus
             (..., 3) voxel_indices_plus
@@ -367,12 +362,13 @@ class Trainer:
         eps = self.cfg.finite_difference_eps
         if offset_points_plus is None or offset_points_minus is None:
             offset_points_plus, offset_points_minus = self.compute_offset_points_for_finite_diff(points)
-        voxel_indices_plus, _, _, sdf_plus = self.model(offset_points_plus, voxel_indices_plus)
-        voxel_indices_minus, _, _, sdf_minus = self.model(offset_points_minus, voxel_indices_minus)
+        voxel_indices_plus, sdf_prior_plus, _, sdf_plus = self.model(offset_points_plus, voxel_indices_plus)
+        voxel_indices_minus, sdf_prior_minus, _, sdf_minus = self.model(offset_points_minus, voxel_indices_minus)
 
         grad = (sdf_plus - sdf_minus) / (2 * eps)
+        prior_grad = (sdf_prior_plus - sdf_prior_minus) / (2 * eps)
 
-        return grad, offset_points_plus, offset_points_minus, voxel_indices_plus, voxel_indices_minus
+        return grad, prior_grad, offset_points_plus, offset_points_minus, voxel_indices_plus, voxel_indices_minus
 
     @torch.no_grad()
     def save_model(self, path: str):

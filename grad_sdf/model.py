@@ -41,14 +41,14 @@ class SdfNetwork(nn.Module):
         points = points.view(-1, 3)
         if voxel_indices is not None:
             voxel_indices = voxel_indices.view(-1)
-        sdf_prior, voxel_indices = self.octree(points, voxel_indices)
-        sdf_residual = self.residual(points)
+        sdf_prior, residual_features, voxel_indices = self.octree(points, voxel_indices)
+        sdf_residual = self.residual(residual_features)
 
         sdf_prior = sdf_prior.view(shape[:-1])
         sdf_residual = sdf_residual.view(shape[:-1])
         voxel_indices = voxel_indices.view(shape[:-1])
 
-        return voxel_indices, sdf_prior, sdf_residual, sdf_prior + sdf_residual
+        return voxel_indices, sdf_prior, sdf_residual, sdf_prior.detach() + sdf_residual
 
     @torch.no_grad()
     def grid_vertex_filter(

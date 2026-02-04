@@ -178,7 +178,11 @@ def generate_sdf_samples(
 
     sdf = nearest_neighbor(
         src=sampled_xyz[:, :-1].contiguous().view(-1, 3),
-        dst=sampled_xyz[:, -1].contiguous().view(-1, 3) if extra_surface_pcd is None else extra_surface_pcd.to(device),
+        dst=(
+            sampled_xyz[:, -1].contiguous().view(-1, 3)
+            if extra_surface_pcd is None
+            else torch.cat([extra_surface_pcd.to(device), sampled_xyz[:, -1].contiguous().view(-1, 3)], dim=0)
+        ),
     )[0].view(num_valid_rays, -1)
     stratified_sdf = sdf[:, :n_stratified].view(num_valid_rays, n_stratified)
     perturbation_sdf = sdf[:, n_stratified : n_stratified + n_perturbed].view(num_valid_rays, n_perturbed)

@@ -19,9 +19,9 @@ key_frame_set:
     identifier: grad_sdf.key_frame_set.KeyFrameSetConfig
     insert_method: intersection
     insert_interval: 50
-    insert_ratio: 0.7
+    insert_ratio: 0.85
     frame_selection: multiple_max_set_coverage
-    selection_window_size: 8
+    selection_window_size: 16
     frame_weight: uniform
 model:
     identifier: grad_sdf.model.SdfNetworkConfig
@@ -31,33 +31,31 @@ model:
         tree_depth: 8 # 0.14*512=71.68m  mesh size  [39.74192742 57.25316639 27.58267038]
         semi_sparse_depth: 5
         init_voxel_num: 80000
-        insertion_threshold: 1
+        insertion_threshold: 4
         skip_insertion_if_exists: true # speed up a bit
         # gradient_augmentation: true
     residual_net_cfg:
         identifier: grad_sdf.residual_net.ResidualNetConfig
-        bound_min: [-10, -10, -10] # placeholder, will be overwritten by the dataset bounds
-        bound_max: [10, 10, 10] # placeholder, will be overwritten by the dataset bounds
-        resolution: 0.1
-        num_levels: 4
-        feature_dims: 2
-        log2_T: 19
-        per_level_scale: 2.0
-        mlp_activation: ReLU
-        hidden_dims: 128
-        n_hidden_layers: 3
-        scale_with_bound: true
+        mlp_activation: Tanh
+        hidden_dims: 64
+        n_hidden_layers: 2
         output_sdf_scale: 0.1
+        residual_feature_dim: 4
 criterion:
     identifier: grad_sdf.criterion.CriterionConfig
     boundary_loss_weight: 100
+    boundary_loss_prior_weight: 100
     boundary_loss_type: L1
-    perturbation_loss_weight: 100
+    perturbation_loss_weight: 0
+    perturbation_loss_prior_weight: 100
     perturbation_loss_type: L1
-    eikonal_loss_surface_weight: 100
-    eikonal_loss_space_weight: 100
+    eikonal_loss_surface_weight: 0
+    eikonal_loss_surface_prior_weight: 100
+    eikonal_loss_space_weight: 0
+    eikonal_loss_space_prior_weight: 100
     eikonal_loss_type: L1
-    projection_loss_weight: 100
+    projection_loss_weight: 0
+    projection_loss_prior_weight: 100
     projection_loss_type: L1
     heat_loss_weight: 0.0
     heat_loss_lambda: 4.0
@@ -67,15 +65,15 @@ criterion:
 num_init_frames: 3
 init_frame_iterations: 10
 num_iterations_per_frame: 1
-num_rays_total: 40960
-extra_surface_sample: false # not helpful
+num_rays_total: 81920
+extra_surface_sample: true
 frame_downsample: 10
 sample_rays:
     identifier: grad_sdf.utils.sampling.SampleRaysConfig
     n_stratified: 1
     n_perturbed: 2
-    depth_min: 0.1
-    depth_max: 25.0
+    depth_min: 0.8
+    depth_max: 40.0
     surface_margin: 1.44
     sigma_s: 0.72
 batch_size: 204800
