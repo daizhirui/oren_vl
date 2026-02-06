@@ -28,6 +28,8 @@ class Trainer:
         self.data_stream = get_dataset(cfg.data.dataset_name, cfg.data.dataset_args)
         self.cfg.data.dataset_args["bound_min"] = self.data_stream.bound_min
         self.cfg.data.dataset_args["bound_max"] = self.data_stream.bound_max
+        self.cfg.model.residual_net_cfg.bound_min = self.data_stream.bound_min - 0.15
+        self.cfg.model.residual_net_cfg.bound_max = self.data_stream.bound_max + 0.15
 
         if self.cfg.data.end_frame < 0:
             self.cfg.data.end_frame = len(self.data_stream)
