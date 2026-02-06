@@ -15,3 +15,4 @@ class OctreeConfig(ConfigABC):
     skip_insertion_if_exists: bool = True
     gradient_augmentation: bool = True
     residual_feature_dim: int = 4
+    residual_num_levels: int = 3

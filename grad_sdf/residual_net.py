@@ -10,10 +10,10 @@ from grad_sdf.utils.config_abc import ConfigABC
 @dataclass
 class ResidualNetConfig(ConfigABC):
     mlp_activation: str = "LeakyReLU"  # activation function for the MLP
+    input_feature_dim: int = 4
     hidden_dims: int = 64  # number of hidden dimensions
     n_hidden_layers: int = 5  # number of hidden layers
     output_sdf_scale: float = 0.1  # scale the output SDF
-    residual_feature_dim: int = 4
 
 
 class ResidualNet(nn.Module):
@@ -26,7 +26,7 @@ class ResidualNet(nn.Module):
         self.cfg = cfg
 
         self.residual_net = tcnn.Network(
-            n_input_dims=cfg.residual_feature_dim + 3,
+            n_input_dims=cfg.input_feature_dim,
             n_output_dims=1,
             network_config={
                 "otype": "FullyFusedMLP",

@@ -22,6 +22,7 @@ class SdfNetwork(nn.Module):
         super().__init__()
         self.cfg = cfg
         self.octree: SemiSparseOctree = SemiSparseOctree(cfg.octree_cfg)
+        cfg.residual_net_cfg.input_feature_dim = cfg.octree_cfg.residual_feature_dim * cfg.octree_cfg.residual_num_levels
         self.residual: ResidualNet = ResidualNet(cfg.residual_net_cfg)
 
     def forward(self, points: torch.Tensor, voxel_indices: torch.Tensor = None):

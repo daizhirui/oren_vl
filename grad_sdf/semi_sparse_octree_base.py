@@ -176,21 +176,25 @@ class SemiSparseOctreeBase(torch.nn.Module, ABC):
         )
 
         if self.cfg.residual_feature_dim > 0:
-            # per_point_vertex_residual_features = self.residual_features[voxel_indices]
-            # for level in range(2, self.cfg.residual_num_levels):
-            #     residual_voxel_indices = self.find_voxel_indices(points, False, level)
-                # per_point_vertex_residual_features = torch.cat(
-                #     [per_point_vertex_residual_features, self.residual_features[residual_voxel_indices]],
-                #     dim=-1,
-                # )
-            per_point_vertex_residual_features = self.residual_features[voxel_indices]  # (n_points, 8, residual_feature_dim)
+            per_point_vertex_residual_features_level_1 = self.residual_features[vertex_indices]  # (n_points, 8, residual_feature_dim)
             residual_features = trilinear_interpolation(
                 points=p,
-                per_point_vertex_values=per_point_vertex_residual_features,
+                per_point_vertex_values=per_point_vertex_residual_features_level_1,
                 little_endian=self.little_endian_vertex_order,
             )
-            points_position_relative = p * 2 - 1
-            residual_features = torch.cat([residual_features, points_position_relative], dim=-1)
+            for level in range(2, self.cfg.residual_num_levels+1):
+                residual_voxel_indices = self.find_voxel_indices(points, False, level)
+                residual_voxel_centers = self.voxel_centers[residual_voxel_indices]  # (n_points, 3)
+                residual_vertex_indices = self.vertex_indices[residual_voxel_indices]  # (n_points, 8)
+                residual_voxel_sizes = self.voxels[residual_voxel_indices, -1:]  # (n_points, 1)
+                p = (points - residual_voxel_centers) / (residual_voxel_sizes * self.cfg.resolution) + 0.5  # (n_points, 3)
+                per_point_vertex_residual_features_level_n = self.residual_features[residual_vertex_indices]  # (n_points, 8, residual_feature_dim)
+                residual_features_level_n = trilinear_interpolation(
+                    points=p,
+                    per_point_vertex_values=per_point_vertex_residual_features_level_n,
+                    little_endian=self.little_endian_vertex_order,
+                )
+                residual_features = torch.cat([residual_features, residual_features_level_n], dim=-1)
         else:
             residual_features = None
 
