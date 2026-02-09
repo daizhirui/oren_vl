@@ -27,8 +27,8 @@ class Trainer:
         dataset_args = self.cfg.data.dataset_args
         bound_min = dataset_args['bound_min']
         bound_max = dataset_args['bound_max']
-        self.cfg.model.residual_net_cfg.bound_min = bound_min
-        self.cfg.model.residual_net_cfg.bound_max = bound_max
+        self.cfg.model.residual_net_cfg.bound_min = [x - 0.15 for x in bound_min]
+        self.cfg.model.residual_net_cfg.bound_max = [x + 0.15 for x in bound_max]
 
         self.key_frame_set = KeyFrameSet(
             cfg=self.cfg.key_frame_set,

@@ -21,6 +21,7 @@ setup_kwargs["entry_points"] = {
     'console_scripts': [
         'mapping_node = grad_sdf.node.mapping_node:main',
         'mapping_sim_node = grad_sdf.node.mapping_sim_node:main',
+        'mapping_quad_node = grad_sdf.node.mapping_quad_node:main',
     ],
 }
 

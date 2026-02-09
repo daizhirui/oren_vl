@@ -114,7 +114,8 @@ source install/setup.bash
 ### Launch mapping node with rosbag
 
 ```bash
-ros2 launch grad_sdf mapping_with_bag.launch.py
+ros2 launch grad_sdf mapping_with_bag.launch.py \
+  config_path:=/home/qihao/workplace/grad-sdf/configs/v2/quad-ros.yaml
 ```
 
 Optional arguments:

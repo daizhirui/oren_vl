@@ -6,6 +6,7 @@ from grad_sdf.criterion import CriterionConfig
 from grad_sdf.dataset.data_config import DataConfig
 from grad_sdf.key_frame_set import KeyFrameSetConfig
 from grad_sdf.model import SdfNetworkConfig
+from grad_sdf.node.ros_confg import RosConfig
 from grad_sdf.utils.config_abc import ConfigABC
 from grad_sdf.utils.sampling import SampleRaysConfig
 
@@ -41,3 +42,4 @@ class TrainerConfig(ConfigABC):
     ckpt_interval: int = -1  # interval to save checkpoints, -1 means no intermediate checkpoints
     profiling: bool = False
     profiling_verbose: bool = False
+    ros: RosConfig = field(default_factory=RosConfig)

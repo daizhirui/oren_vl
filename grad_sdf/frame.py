@@ -67,7 +67,7 @@ class DepthFrame(Frame):
         self.ref_pose[:3, 3] += offset  # Offset ensures voxel coordinates > 0
 
         self.rays_d: torch.Tensor = self.get_rays(K=self.K)  # (H, W, 3) in camera coordinates
-        self.points: torch.Tensor = self.rays_d * self.depth[..., None]  # (H, W, 3) in world coordinates
+        self.points: torch.Tensor = self.rays_d * self.depth[..., None]  # (H, W, 3) in camera coordinates
         self.valid_mask: torch.Tensor = self.depth > 0  # (H, W) depth > 0
 
     def get_frame_index(self):
@@ -99,11 +99,18 @@ class DepthFrame(Frame):
         return rays_d
 
     def get_points(self, to_world_frame: bool, device: str):
-        points = self.points[self.valid_mask].reshape(-1, 3).to(device)  # [N,3]
+        points = self.points.to(device)  # (H, W, 3)
+        valid_mask = self.valid_mask.to(device)  # (H, W)
+
+        # 在同一设备上进行索引操作
+        points = points[valid_mask].reshape(-1, 3)  # [N,3]
+
         if to_world_frame:
             pose = self.get_ref_pose().to(device)
             points = points @ pose[:3, :3].T + pose[:3, 3]  # to world coordinates
+            print(f'points_min: {points.reshape(-1, 3).min(dim=0)}, points_max: {points.reshape(-1, 3).max(dim=0)}')
         return points
+
 
     def get_rays_direction(self):
         return self.rays_d
@@ -117,38 +124,66 @@ class DepthFrame(Frame):
     def _project_points_to_boundary(
         self, bound_min: torch.Tensor, bound_max: torch.Tensor, points_out_of_bound: torch.Tensor
     ):
-        origin = self.get_ref_translation().view(1, 3)  # (1, 3)
+        origin = self.get_ref_translation().view(1, 3)  # (1, 3) 相机位置（假设在边界内）
 
-        ray_dir = points_out_of_bound - origin
+        if (origin < bound_min).any() or (origin > bound_max).any():
+            raise ValueError("Camera origin is outside the bounding box, which is not allowed for projection.")
+
+        ray_dir = points_out_of_bound - origin  # 从相机到超出边界点的方向
 
         inv_dir = 1.0 / (ray_dir + 1e-8)
         t_min_planes = (bound_min.view(1, 3) - origin) * inv_dir
         t_max_planes = (bound_max.view(1, 3) - origin) * inv_dir
 
+        # 计算射线与边界框的出口点（第一个交点，因为起点在边界内）
         t_max_each_dim = torch.max(t_min_planes, t_max_planes)
-        t_exit_final = torch.min(t_max_each_dim, dim=-1)[0]
+        t_exit = torch.min(t_max_each_dim, dim=-1)[0]
 
-        projected_points_world = origin + t_exit_final.view(-1, 1) * ray_dir
+        # 将投影点稍微向内收缩（epsilon），避免浮点数精度导致的边界判定问题
+        epsilon = 0.9999
+        projected_points_world = origin + (t_exit * epsilon).view(-1, 1) * ray_dir
 
+        # 转换回相机坐标系
         R_w2c = self.ref_pose[:3, :3].T
         t_w2c = -R_w2c @ self.ref_pose[:3, 3]
-
         projected_points_cam = projected_points_world @ R_w2c.T + t_w2c
 
         return projected_points_cam
 
     def apply_bound(self, bound_min: torch.Tensor, bound_max: torch.Tensor):
-        points = self.points @ self.ref_pose[:3, :3].T + self.ref_pose[:3, 3]
+        points = self.points[self.valid_mask] @ self.ref_pose[:3, :3].T + self.ref_pose[:3, 3]
 
-        mask = (points >= bound_min.view(1, 1, 3)) & (points <= bound_max.view(1, 1, 3))
-        mask = mask.all(dim=-1)
+        in_bound_mask = (points >= bound_min.view(1, 3)) & (points <= bound_max.view(1, 3))
+        out_of_bound_mask = ~in_bound_mask.all(dim=-1)
 
-        points_out_of_bound = points[~mask]
-
+        points_out_of_bound = points[out_of_bound_mask]
         if points_out_of_bound.shape[0] > 0:
-            new_points = self.project_points_to_boundary(bound_min, bound_max, points_out_of_bound)
+            new_points = self._project_points_to_boundary(bound_min, bound_max, points_out_of_bound)
+            # 将 points 和 depth 展平处理
+            points_flat = self.points[self.valid_mask]  # (N, 3)
+            depth_flat = self.depth[self.valid_mask]    # (N,)
 
-            self.depth[~mask] = new_points[:, 2]
+            # 修改展平后的数据
+            points_flat[out_of_bound_mask] = new_points
+            depth_flat[out_of_bound_mask] = new_points[:, 2]
+
+            # 写回原始张量
+            self.points[self.valid_mask] = points_flat
+            self.depth[self.valid_mask] = depth_flat
+
+    # def apply_bound(self, bound_min: torch.Tensor, bound_max: torch.Tensor):
+    #     points = self.points @ self.ref_pose[:3, :3].T + self.ref_pose[:3, 3]
+    #     mask = points >= bound_min.view(1, 1, 3)
+    #     mask = mask & (points <= bound_max.view(1, 1, 3))
+    #     mask = mask.all(dim=-1)
+    #     if mask.any():
+    #         # We want the min/max across the H and W dimensions, not the channel dim
+    #         # Use .view(-1, 3) to flatten spatial dims for easy min/max calculation
+    #         actual_min = points.view(-1, 3).min(dim=0)[0]
+    #         actual_max = points.view(-1, 3).max(dim=0)[0]
+    #         print(f'Actual Point Bounds - Min: {actual_min}, Max: {actual_max}')
+    #     self.valid_mask = self.valid_mask & mask
+
 
     def sample_points(
         self,
