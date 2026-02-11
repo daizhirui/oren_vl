@@ -108,9 +108,8 @@ class DepthFrame(Frame):
         if to_world_frame:
             pose = self.get_ref_pose().to(device)
             points = points @ pose[:3, :3].T + pose[:3, 3]  # to world coordinates
-            print(f'points_min: {points.reshape(-1, 3).min(dim=0)}, points_max: {points.reshape(-1, 3).max(dim=0)}')
+            print(f"points_min: {points.reshape(-1, 3).min(dim=0)}, points_max: {points.reshape(-1, 3).max(dim=0)}")
         return points
-
 
     def get_rays_direction(self):
         return self.rays_d
@@ -124,26 +123,26 @@ class DepthFrame(Frame):
     def _project_points_to_boundary(
         self, bound_min: torch.Tensor, bound_max: torch.Tensor, points_out_of_bound: torch.Tensor
     ):
-        origin = self.get_ref_translation().view(1, 3)  # (1, 3) 相机位置（假设在边界内）
+        origin = self.get_ref_translation().view(1, 3)  # (1, 3) camera position (assumed to be inside the boundary)
 
         if (origin < bound_min).any() or (origin > bound_max).any():
             raise ValueError("Camera origin is outside the bounding box, which is not allowed for projection.")
 
-        ray_dir = points_out_of_bound - origin  # 从相机到超出边界点的方向
+        ray_dir = points_out_of_bound - origin  # direction from camera to out-of-bound points
 
         inv_dir = 1.0 / (ray_dir + 1e-8)
         t_min_planes = (bound_min.view(1, 3) - origin) * inv_dir
         t_max_planes = (bound_max.view(1, 3) - origin) * inv_dir
 
-        # 计算射线与边界框的出口点（第一个交点，因为起点在边界内）
+        # Compute exit point of ray and bounding box (first intersection since origin is inside boundary)
         t_max_each_dim = torch.max(t_min_planes, t_max_planes)
         t_exit = torch.min(t_max_each_dim, dim=-1)[0]
 
-        # 将投影点稍微向内收缩（epsilon），避免浮点数精度导致的边界判定问题
+        # Slightly shrink the projected point toward interior (epsilon) to avoid floating-point border issues
         epsilon = 0.9999
         projected_points_world = origin + (t_exit * epsilon).view(-1, 1) * ray_dir
 
-        # 转换回相机坐标系
+        # Transform back to camera coordinate system
         R_w2c = self.ref_pose[:3, :3].T
         t_w2c = -R_w2c @ self.ref_pose[:3, 3]
         projected_points_cam = projected_points_world @ R_w2c.T + t_w2c
@@ -159,15 +158,15 @@ class DepthFrame(Frame):
         points_out_of_bound = points[out_of_bound_mask]
         if points_out_of_bound.shape[0] > 0:
             new_points = self._project_points_to_boundary(bound_min, bound_max, points_out_of_bound)
-            # 将 points 和 depth 展平处理
+            # Flatten points and depth for processing
             points_flat = self.points[self.valid_mask]  # (N, 3)
-            depth_flat = self.depth[self.valid_mask]    # (N,)
+            depth_flat = self.depth[self.valid_mask]  # (N,)
 
-            # 修改展平后的数据
+            # Modify the flattened data for out-of-bound points
             points_flat[out_of_bound_mask] = new_points
             depth_flat[out_of_bound_mask] = new_points[:, 2]
 
-            # 写回原始张量
+            # Write back to original tensor
             self.points[self.valid_mask] = points_flat
             self.depth[self.valid_mask] = depth_flat
 
@@ -183,7 +182,6 @@ class DepthFrame(Frame):
     #         actual_max = points.view(-1, 3).max(dim=0)[0]
     #         print(f'Actual Point Bounds - Min: {actual_min}, Max: {actual_max}')
     #     self.valid_mask = self.valid_mask & mask
-
 
     def sample_points(
         self,
