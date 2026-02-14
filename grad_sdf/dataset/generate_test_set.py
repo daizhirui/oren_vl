@@ -25,7 +25,7 @@ def compute_sdf_ground_truth(
     # compute SDF
     tqdm.write("Computing ground truth SDF")
     f = MeshSdf(np.asarray(gt_mesh.vertices), np.asarray(gt_mesh.triangles))
-    sdf = f(query_points.T)
+    sdf = f(query_points)
 
     # compute gradient
     tqdm.write("Computing ground truth SDF gradient")
@@ -33,8 +33,8 @@ def compute_sdf_ground_truth(
     for i in range(3):
         offset = np.zeros((3,))
         offset[i] = eps
-        a = f((query_points + offset).T)
-        b = f((query_points - offset).T)
+        a = f(query_points + offset)
+        b = f(query_points - offset)
         grad[:, i] = (a - b) / (2 * eps)
 
     # normalize gradient
