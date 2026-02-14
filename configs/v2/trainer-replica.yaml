@@ -47,13 +47,13 @@ model:
 criterion:
     identifier: grad_sdf.criterion.CriterionConfig
     boundary_loss_weight: 1000
-    perturbation_loss_weight: 200
-    eikonal_loss_surface_weight: 3
-    eikonal_loss_perturbation_weight: 2
+    perturbation_loss_weight: 50
+    eikonal_loss_surface_weight: 10
+    eikonal_loss_perturbation_weight: 10
     eikonal_loss_space_weight: 10
     projection_loss_weight: 100
-    boundary_loss_prior_weight: 1000
-    perturbation_loss_prior_weight: 200
+    boundary_loss_prior_weight: 2000
+    perturbation_loss_prior_weight: 100
     eikonal_loss_surface_prior_weight: 3
     eikonal_loss_perturbation_prior_weight: 2
     eikonal_loss_space_prior_weight: 10
@@ -79,12 +79,12 @@ sample_rays:
     n_perturbed: 2
     depth_min: 0.07
     depth_max: 10.0
-    surface_margin: 0.12
-    sigma_s: 0.06
+    surface_margin: 0.09
+    sigma_s: 0.03
 batch_size: 204800
 lr: 0.005
 grad_method: finite_difference
-finite_difference_eps: 0.03
+finite_difference_eps: 0.02
 final_iterations: 0
 save_mesh: true
 mesh_resolution: 0.02

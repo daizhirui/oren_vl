@@ -74,6 +74,8 @@ class Criterion(nn.Module):
         pred_prior_grad: torch.Tensor,
         gt_sdf_perturb: torch.Tensor,
         gt_sdf_stratified: torch.Tensor,
+        gaussian_positive_mask: torch.Tensor,
+        perturb_sigma: float,
     ):
         loss = 0
         loss_dict = {}
@@ -89,14 +91,18 @@ class Criterion(nn.Module):
         if self.cfg.perturbation_loss_weight > 0:
             perturbation_loss = self.get_perturbation_loss(
                 pred_sdf[:, self.n_stratified : self.n_stratified + self.n_perturbed],
+                gaussian_positive_mask,
                 gt_sdf_perturb,
+                perturb_sigma,
             )
             loss += self.cfg.perturbation_loss_weight * perturbation_loss
             loss_dict["perturbation_loss"] = perturbation_loss.item()
         if self.cfg.perturbation_loss_prior_weight > 0:
             perturbation_loss_prior = self.get_perturbation_loss(
                 pred_prior[:, self.n_stratified : self.n_stratified + self.n_perturbed],
+                gaussian_positive_mask,
                 gt_sdf_perturb,
+                perturb_sigma,
             )
             loss += self.cfg.perturbation_loss_prior_weight * perturbation_loss_prior
             loss_dict["perturbation_loss_prior"] = perturbation_loss_prior.item()
@@ -160,9 +166,32 @@ class Criterion(nn.Module):
         boundary_loss = self.boundary_loss_fn(pred_sdf_surface, torch.zeros_like(pred_sdf_surface))
         return boundary_loss
 
-    def get_perturbation_loss(self, pred_sdf_perturb: torch.Tensor, gt_sdf_perturb: torch.Tensor):
-        perturbation_loss = self.perturbation_loss_fn(pred_sdf_perturb, gt_sdf_perturb)
-        return perturbation_loss
+    def get_perturbation_loss(
+        self,
+        pred_sdf_perturb: torch.Tensor,
+        gaussian_positive_mask: torch.Tensor,
+        gt_sdf_perturb: torch.Tensor,
+        perturb_sigma: float,
+    ):
+        # Clone to avoid modifying input tensors
+        pred_sdf_perturb = pred_sdf_perturb.clone()
+        gt_sdf_perturb = gt_sdf_perturb.clone()
+
+        # Flip sign for positive perturbations (outside surface)
+        pred_sdf_perturb[gaussian_positive_mask] = -pred_sdf_perturb[gaussian_positive_mask]
+        gt_sdf_perturb[gaussian_positive_mask] = -gt_sdf_perturb[gaussian_positive_mask]
+
+        perturb_loss_upperbound = gt_sdf_perturb
+        perturb_loss_lowerbound = perturb_sigma * 1.0 * torch.ones_like(gt_sdf_perturb)
+
+        above_upper_loss = torch.clamp(pred_sdf_perturb - perturb_loss_upperbound, min=0)
+        below_lower = torch.clamp(perturb_loss_lowerbound - pred_sdf_perturb, min=0)
+
+        # Use exponential penalty for below lower bound to emphasize constraint
+        below_lower_loss = torch.exp(10 * below_lower) - 1
+        perturb_loss = above_upper_loss + below_lower_loss
+
+        return perturb_loss.mean()
 
     def get_eikonal_loss_surface(self, grad_norm: torch.Tensor):
         grad_norm_surface = grad_norm[:, -1]  # surface

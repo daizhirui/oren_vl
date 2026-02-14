@@ -282,6 +282,8 @@ class Trainer:
                         pred_prior_grad=sdf_prior_grad_all,
                         gt_sdf_perturb=self.samples.perturbation_sdf,
                         gt_sdf_stratified=self.samples.stratified_sdf,
+                        gaussian_positive_mask=self.samples.gaussian_positive_mask,
+                        perturb_sigma=self.cfg.sample_rays.sigma_s,
                     )
                     loss.backward()
                     self.optimizer.step()
