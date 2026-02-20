@@ -34,17 +34,13 @@ model:
         # gradient_augmentation: true
     residual_net_cfg:
         identifier: grad_sdf.residual_net.ResidualNetConfig
-        bound_min: [-4.3, -3.3, 0.0]
-        bound_max: [4.3, 3.3, 2.5]
-        resolution: 0.1
+        bound_min: [-10, -10, -10] # will be overwritten by the dataset args
+        bound_max: [10, 10, 10] # will be overwritten by the dataset args
         num_levels: 1
         feature_dims: 1
-        log2_T: 19
-        per_level_scale: 2.0
         mlp_activation: ReLU
         hidden_dims: 32
         n_hidden_layers: 2
-        scale_with_bound: true
         output_sdf_scale: 0.1
 criterion:
     identifier: grad_sdf.criterion.CriterionConfig
