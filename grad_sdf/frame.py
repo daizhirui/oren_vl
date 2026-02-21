@@ -124,12 +124,13 @@ class DepthFrame(Frame):
     def get_valid_mask(self):
         return self.valid_mask
 
+    @torch.no_grad()
     def _project_points_to_boundary(
         self, bound_min: torch.Tensor, bound_max: torch.Tensor, points_out_of_bound: torch.Tensor
     ):
         origin = self.get_ref_translation().view(1, 3)  # (1, 3) camera position (assumed to be inside the boundary)
 
-        if (origin < bound_min).any() or (origin > bound_max).any():
+        if ((origin < bound_min) | (origin > bound_max)).any():
             raise ValueError("Camera origin is outside the bounding box, which is not allowed for projection.")
 
         ray_dir = points_out_of_bound - origin  # direction from camera to out-of-bound points
@@ -143,36 +144,41 @@ class DepthFrame(Frame):
         t_exit = torch.min(t_max_each_dim, dim=-1)[0]
 
         # Slightly shrink the projected point toward interior (epsilon) to avoid floating-point border issues
-        epsilon = 0.9999
-        projected_points_world = origin + (t_exit * epsilon).view(-1, 1) * ray_dir
+        projected_points_world = origin + (t_exit * 0.9999).unsqueeze(-1) * ray_dir
 
         # Transform back to camera coordinate system
-        R_w2c = self.ref_pose[:3, :3].T
-        t_w2c = -R_w2c @ self.ref_pose[:3, 3]
-        projected_points_cam = projected_points_world @ R_w2c.T + t_w2c
+        R_c2w = self.ref_pose[:3, :3]
+        t_c2w = self.ref_pose[:3, 3]
+        projected_points_cam = (projected_points_world - t_c2w) @ R_c2w
 
         return projected_points_cam
 
+    @torch.no_grad()
     def apply_bound(self, bound_min: torch.Tensor, bound_max: torch.Tensor):
-        points = self.points[self.valid_mask] @ self.ref_pose[:3, :3].T + self.ref_pose[:3, 3]
+        # Get 2D indices of valid points — avoids repeated boolean fancy indexing
+        valid_indices = torch.nonzero(self.valid_mask, as_tuple=False)  # (N, 2)
+        if valid_indices.shape[0] == 0:
+            return
 
-        in_bound_mask = (points >= bound_min.view(1, 3)) & (points <= bound_max.view(1, 3))
-        out_of_bound_mask = ~in_bound_mask.all(dim=-1)
+        # Read valid points once via integer indexing (faster than boolean indexing for sparse masks)
+        points_cam = self.points[valid_indices[:, 0], valid_indices[:, 1]]  # (N, 3)
 
-        points_out_of_bound = points[out_of_bound_mask]
-        if points_out_of_bound.shape[0] > 0:
-            new_points = self._project_points_to_boundary(bound_min, bound_max, points_out_of_bound)
-            # Flatten points and depth for processing
-            points_flat = self.points[self.valid_mask]  # (N, 3)
-            depth_flat = self.depth[self.valid_mask]  # (N,)
+        # Transform to world coordinates
+        R_c2w = self.ref_pose[:3, :3]
+        t_c2w = self.ref_pose[:3, 3]
+        points_world = points_cam @ R_c2w.T + t_c2w  # (N, 3)
 
-            # Modify the flattened data for out-of-bound points
-            points_flat[out_of_bound_mask] = new_points
-            depth_flat[out_of_bound_mask] = new_points[:, 2]
+        # Find out-of-bound points
+        out_of_bound_mask = ((points_world < bound_min) | (points_world > bound_max)).any(dim=-1)  # (N,)
 
-            # Write back to original tensor
-            self.points[self.valid_mask] = points_flat
-            self.depth[self.valid_mask] = depth_flat
+        if out_of_bound_mask.any():
+            new_points_cam = self._project_points_to_boundary(
+                bound_min, bound_max, points_world[out_of_bound_mask]
+            )
+            # Write back only the out-of-bound points via direct integer indexing
+            oob_indices = valid_indices[out_of_bound_mask]  # (M, 2)
+            self.points[oob_indices[:, 0], oob_indices[:, 1]] = new_points_cam
+            self.depth[oob_indices[:, 0], oob_indices[:, 1]] = new_points_cam[:, 2]
 
     # def apply_bound(self, bound_min: torch.Tensor, bound_max: torch.Tensor):
     #     points = self.points @ self.ref_pose[:3, :3].T + self.ref_pose[:3, 3]
