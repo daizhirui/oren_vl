@@ -240,6 +240,7 @@ class GradSDFMappingNode(Node):
             self.get_logger().warn(f'Pose position: {pos_vec} is out of bound, skipping frame {self.frame_count}')
             return
 
+
         # Create LiDARFrame with points in sensor frame and pose
         frame = DepthFrame(
             fid=self.frame_count,
@@ -250,7 +251,8 @@ class GradSDFMappingNode(Node):
             max_depth=self.cfg.data.dataset_args['max_depth'],
             min_depth=self.cfg.data.dataset_args['min_depth'],
         )
-        frame.apply_bound(self.bound_min, self.bound_max)
+        with self.trainer.timer_apply_bound:
+            frame.apply_bound(self.bound_min, self.bound_max)
 
         # Get points in world frame
         points_world = frame.get_points(to_world_frame=True, device=self.cfg.device)

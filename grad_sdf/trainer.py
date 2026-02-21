@@ -59,27 +59,14 @@ class Trainer:
 
         timer_on = self.cfg.profiling
         verbose = self.cfg.profiling_verbose
-        self.timer_octree_insert = GpuTimer(
-            "octree insert", enable=timer_on, verbose=verbose
-        )
-        self.timer_key_frame_set_update = GpuTimer(
-            "key frame set update", enable=timer_on, verbose=verbose
-        )
-        self.timer_train_frame = GpuTimer(
-            "train with frame", enable=timer_on, verbose=verbose
-        )
-        self.timer_select_key_frames = GpuTimer(
-            "select key frames", enable=timer_on, verbose=verbose
-        )
-        self.timer_sample_rays = GpuTimer(
-            "sample rays", enable=timer_on, verbose=verbose
-        )
-        self.timer_generate_sdf_samples = GpuTimer(
-            "generate sdf samples", enable=timer_on, verbose=verbose
-        )
-        self.timer_compute_offset_points = GpuTimer(
-            "compute offset points", enable=timer_on, verbose=verbose
-        )
+        self.timer_apply_bound = GpuTimer("apply bound", enable=timer_on, verbose=verbose)
+        self.timer_octree_insert = GpuTimer("octree insert", enable=timer_on, verbose=verbose)
+        self.timer_key_frame_set_update = GpuTimer("key frame set update", enable=timer_on, verbose=verbose)
+        self.timer_train_frame = GpuTimer("train with frame", enable=timer_on, verbose=verbose)
+        self.timer_select_key_frames = GpuTimer("select key frames", enable=timer_on, verbose=verbose)
+        self.timer_sample_rays = GpuTimer("sample rays", enable=timer_on, verbose=verbose)
+        self.timer_generate_sdf_samples = GpuTimer("generate sdf samples", enable=timer_on, verbose=verbose)
+        self.timer_compute_offset_points = GpuTimer("compute offset points", enable=timer_on, verbose=verbose)
         self.timer_find_voxel_indices_offset_points = GpuTimer(
             "find voxel indices for offset points", enable=timer_on, verbose=verbose
         )

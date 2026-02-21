@@ -24,10 +24,10 @@ model:
     identifier: grad_sdf.model.SdfNetworkConfig
     octree_cfg:
         identifier: grad_sdf.octree_config.OctreeConfig
-        resolution: 0.1
-        tree_depth: 7 # 0.1*2^8=25.6m
-        semi_sparse_depth: 5
-        init_voxel_num: 200000
+        resolution: 0.2
+        tree_depth: 6 # 0.1*2^8=25.6m
+        semi_sparse_depth: 3
+        init_voxel_num: 10000
         insertion_threshold: 8
         skip_insertion_if_exists: true # speed up a bit
         residual_feature_dim: 8
@@ -68,7 +68,7 @@ criterion:
 num_init_frames: 0
 init_frame_iterations: 10
 num_iterations_per_frame: 1
-num_rays_total: 20480
+num_rays_total: 1024
 extra_surface_sample: false # not helpful
 frame_downsample: 100
 sample_rays:
@@ -89,5 +89,5 @@ mesh_resolution: 0.03
 mesh_iso_value: 0.0
 clean_mesh: true
 ckpt_interval: -1
-profiling: false
-profiling_verbose: false
+profiling: true
+profiling_verbose: true
