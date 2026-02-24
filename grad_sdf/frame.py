@@ -106,13 +106,11 @@ class DepthFrame(Frame):
         points = self.points.to(device)  # (H, W, 3)
         valid_mask = self.valid_mask.to(device)  # (H, W)
 
-        # 在同一设备上进行索引操作
         points = points[valid_mask].reshape(-1, 3)  # [N,3]
 
         if to_world_frame:
             pose = self.get_ref_pose().to(device)
             points = points @ pose[:3, :3].T + pose[:3, 3]  # to world coordinates
-            # print(f"points_min: {points.reshape(-1, 3).min(dim=0)}, points_max: {points.reshape(-1, 3).max(dim=0)}")
         return points
 
     def get_rays_direction(self):
@@ -126,66 +124,58 @@ class DepthFrame(Frame):
 
     @torch.no_grad()
     def apply_bound(self, bound_min: torch.Tensor, bound_max: torch.Tensor, device: str):
-        # 1. Identify device and ensure all inputs match
+        """Applies a bounding box constraint to points in the frame.
+
+        Any points in camera coordinates that, when transformed to world coordinates,
+        fall outside the axis-aligned bounding box defined by [bound_min, bound_max]
+        are projected back onto the box boundary along the ray from the camera origin.
+
+        Args:
+            bound_min (torch.Tensor): Lower corner (3,) of the bounding box, in world coordinates.
+            bound_max (torch.Tensor): Upper corner (3,) of the bounding box, in world coordinates.
+            device (str): Device for tensors and computation.
+        """
         bound_min = bound_min.to(device, non_blocking=True)
         bound_max = bound_max.to(device, non_blocking=True)
 
-        # 2. Use the valid mask to get points directly on GPU
-        # mask is assumed to be a boolean tensor (H, W)
         mask = self.valid_mask
         if not mask.any():
             return
 
-        # 3. Transform to World Space
-        # R_c2w (3, 3), t_c2w (3,) - Ensure these are on CUDA
         pose = self.ref_pose.to(device, non_blocking=True)
         R_c2w = pose[:3, :3]
         t_c2w = pose[:3, 3]
 
         points = self.points.to(device, non_blocking=True)
         mask = mask.to(device, non_blocking=True)
-        points_cam = points[mask]  # (N, 3)
-        # Batch matrix multiplication: (N, 3) @ (3, 3) + (3,)
+        points_cam = points[mask]
         points_world = torch.addmm(t_c2w, points_cam, R_c2w.T)
 
-        # 4. Vectorized Out-of-Bounds Check
-        # Avoids multiple passes over the data
+        # Out-of-bounds mask
         oob_mask = (points_world < bound_min).any(-1) | (points_world > bound_max).any(-1)
-
         if not oob_mask.any():
             return
 
-        # Filter only OOB points for the projection math
         pts_to_proj = points_world[oob_mask]
-        origin = t_c2w.view(1, 3) # Camera center in World Space
+        origin = t_c2w.view(1, 3)
 
-        # 5. Ray-AABB Intersection (The "Slab" Method)
-        # Direction from camera origin to the out-of-bounds point
+        # Ray-AABB intersection using "slab method"
         ray_dir = pts_to_proj - origin
-
-        # Use 1e-8 to prevent division by zero for axis-aligned rays
         safe_dir = torch.where(ray_dir.abs() < 1e-8, torch.sign(ray_dir) * 1e-8, ray_dir)
         inv_dir = 1.0 / safe_dir
         t_near = (bound_min - origin) * inv_dir
         t_far = (bound_max - origin) * inv_dir
-
-        # The intersection exit point is the minimum of the maximum distances
-        # across the X, Y, and Z planes.
         t_exit = torch.min(torch.max(t_near, t_far), dim=-1)[0]
 
-        # 6. Project and Move back to Camera Space
-        # (t_exit * 0.9999) keeps the point just inside the volume
+        # Project to boundary, keeping just inside
         projected_world = origin + (t_exit.unsqueeze(-1) * 0.9999) * ray_dir
 
-        # World to Cam: (P_world - t_c2w) @ R_c2w
-        # Optimized: since (projected_world - t_c2w) is just the scaled ray_dir
+        # Back to camera coordinates
         projected_cam = (projected_world - t_c2w) @ R_c2w
 
-        # 7. Final Write-back
-        # Combine masks to index the original tensors only once
+        # Write projected points back
         final_indices = mask.clone().to(self.points.device, non_blocking=True)
         final_indices[mask] = oob_mask.to(self.points.device, non_blocking=True)
-
         self.points[final_indices] = projected_cam.to(self.points.device, non_blocking=True)
         self.depth[final_indices] = projected_cam[:, 2].to(self.depth.device, non_blocking=True)
 
