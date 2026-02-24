@@ -196,7 +196,7 @@ class Trainer:
                         j = min(i + bs, num_rays)
                         points = self.samples.sampled_xyz[i:j]  # (b, m, 3)
                         voxel_indices_batch = voxel_indices[i:j]
-                        _, sdf_prior, sdf_residual, sdf_pred = self.model(
+                        _, sdf_prior, _, sdf_pred = self.model(
                             points, voxel_indices_batch
                         )
                         if self.cfg.grad_method == "autodiff":

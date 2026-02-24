@@ -147,11 +147,13 @@ class SemiSparseOctreeBase(torch.nn.Module, ABC):
 
         if batch_size > 0:
             n_points = points.shape[0]
+            voxel_indices = torch.zeros((n_points,), dtype=torch.long, device=points.device)
             sdf_preds = torch.zeros((n_points,), dtype=torch.float32, device=points.device)
+            residual_features = torch.zeros((n_points, self.cfg.residual_feature_dim*self.cfg.residual_num_levels), dtype=torch.float32, device=points.device)
             for start in range(0, n_points, batch_size):
                 end = min(start + batch_size, n_points)
-                sdf_preds[start:end] = self.forward(points[start:end], voxel_indices[start:end])
-            return sdf_preds, voxel_indices
+                voxel_indices[start:end], sdf_preds[start:end], residual_features[start:end] = self.forward(points[start:end], voxel_indices[start:end])
+            return voxel_indices, sdf_preds, residual_features
 
         # Implement the forward pass logic here
         assert voxel_indices.dtype == torch.long
@@ -177,11 +179,6 @@ class SemiSparseOctreeBase(torch.nn.Module, ABC):
             little_endian=self.little_endian_vertex_order,
         )
 
-        # prior_features = torch.cat(
-        #     [vertex_sdf_priors.reshape(-1, 8), vertex_grad_priors.reshape(-1, 24)],
-        #     dim=-1,
-        # )  # (n_points, 32)
-        prior_features = sdf_preds.unsqueeze(-1)
 
         if self.cfg.residual_feature_dim > 0:
             per_point_vertex_residual_features_level_1 = self.residual_features[
@@ -213,7 +210,7 @@ class SemiSparseOctreeBase(torch.nn.Module, ABC):
         else:
             residual_features = None
 
-        return sdf_preds, prior_features, residual_features, voxel_indices
+        return voxel_indices, sdf_preds, residual_features
 
     @property
     @abstractmethod

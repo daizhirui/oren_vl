@@ -118,7 +118,10 @@ class GradSdfEvaluator(EvaluatorBase):
             points_batch = points[i:j].to(self.device)
             points_batch.requires_grad_(auto_grad)
             voxel_indices_batch, sdf_prior_batch, sdf_residual_batch, _ = model(points_batch)
-            sdf_pred_batch = sdf_prior_batch + sdf_residual_batch
+            if sdf_residual_batch is not None:
+                sdf_pred_batch = sdf_prior_batch + sdf_residual_batch
+            else:
+                sdf_pred_batch = sdf_prior_batch
 
             if get_grad:
                 if auto_grad:
@@ -136,14 +139,14 @@ class GradSdfEvaluator(EvaluatorBase):
                         create_graph=True,
                         allow_unused=True,
                     )[0]
-                    sdf_prior_grad.append(sdf_grad_batch.detach().cpu())
-                    sdf_grad.append(sdf_prior_grad_batch.detach().cpu())
+                    sdf_prior_grad.append(sdf_prior_grad_batch.detach().cpu())
+                    sdf_grad.append(sdf_grad_batch.detach().cpu())
                 else:
                     sdf_grad_batch = torch.empty_like(points_batch)
                     sdf_prior_grad_batch = torch.empty_like(points_batch)
                     for k in range(3):
                         offset = torch.zeros((3,), device=points_batch.device)
-                        offset[i] = finite_diff_eps
+                        offset[k] = finite_diff_eps
                         offset = offset.view(*[1] * (points_batch.ndim - 1), 3)
                         _, sdf_prior_plus, _, sdf_plus = model(points_batch + offset)
                         _, sdf_prior_minus, _, sdf_minus = model(points_batch - offset)
@@ -154,7 +157,10 @@ class GradSdfEvaluator(EvaluatorBase):
 
             voxel_indices.append(voxel_indices_batch.detach().cpu())
             sdf_prior.append(sdf_prior_batch.detach().cpu())
-            sdf_residual.append(sdf_residual_batch.detach().cpu())
+            if sdf_residual_batch is not None:
+                sdf_residual.append(sdf_residual_batch.detach().cpu())
+            else:
+                sdf_residual.append(None)
             sdf_pred.append(sdf_pred_batch.detach().cpu())
 
         if device is None:

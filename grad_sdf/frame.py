@@ -125,60 +125,69 @@ class DepthFrame(Frame):
         return self.valid_mask
 
     @torch.no_grad()
-    def _project_points_to_boundary(
-        self, bound_min: torch.Tensor, bound_max: torch.Tensor, points_out_of_bound: torch.Tensor
-    ):
-        origin = self.get_ref_translation().view(1, 3)  # (1, 3) camera position (assumed to be inside the boundary)
+    def apply_bound(self, bound_min: torch.Tensor, bound_max: torch.Tensor, device: str):
+        # 1. Identify device and ensure all inputs match
+        bound_min = bound_min.to(device, non_blocking=True)
+        bound_max = bound_max.to(device, non_blocking=True)
 
-        if ((origin < bound_min) | (origin > bound_max)).any():
-            raise ValueError("Camera origin is outside the bounding box, which is not allowed for projection.")
-
-        ray_dir = points_out_of_bound - origin  # direction from camera to out-of-bound points
-
-        inv_dir = 1.0 / (ray_dir + 1e-8)
-        t_min_planes = (bound_min.view(1, 3) - origin) * inv_dir
-        t_max_planes = (bound_max.view(1, 3) - origin) * inv_dir
-
-        # Compute exit point of ray and bounding box (first intersection since origin is inside boundary)
-        t_max_each_dim = torch.max(t_min_planes, t_max_planes)
-        t_exit = torch.min(t_max_each_dim, dim=-1)[0]
-
-        # Slightly shrink the projected point toward interior (epsilon) to avoid floating-point border issues
-        projected_points_world = origin + (t_exit * 0.9999).unsqueeze(-1) * ray_dir
-
-        # Transform back to camera coordinate system
-        R_c2w = self.ref_pose[:3, :3]
-        t_c2w = self.ref_pose[:3, 3]
-        projected_points_cam = (projected_points_world - t_c2w) @ R_c2w
-
-        return projected_points_cam
-
-    @torch.no_grad()
-    def apply_bound(self, bound_min: torch.Tensor, bound_max: torch.Tensor):
-        # Get 2D indices of valid points — avoids repeated boolean fancy indexing
-        valid_indices = torch.nonzero(self.valid_mask, as_tuple=False)  # (N, 2)
-        if valid_indices.shape[0] == 0:
+        # 2. Use the valid mask to get points directly on GPU
+        # mask is assumed to be a boolean tensor (H, W)
+        mask = self.valid_mask
+        if not mask.any():
             return
 
-        # Read valid points once via integer indexing (faster than boolean indexing for sparse masks)
-        points_cam = self.points[valid_indices[:, 0], valid_indices[:, 1]]  # (N, 3)
+        # 3. Transform to World Space
+        # R_c2w (3, 3), t_c2w (3,) - Ensure these are on CUDA
+        pose = self.ref_pose.to(device, non_blocking=True)
+        R_c2w = pose[:3, :3]
+        t_c2w = pose[:3, 3]
 
-        # Transform to world coordinates
-        R_c2w = self.ref_pose[:3, :3]
-        t_c2w = self.ref_pose[:3, 3]
-        points_world = points_cam @ R_c2w.T + t_c2w  # (N, 3)
+        points = self.points.to(device, non_blocking=True)
+        mask = mask.to(device, non_blocking=True)
+        points_cam = points[mask]  # (N, 3)
+        # Batch matrix multiplication: (N, 3) @ (3, 3) + (3,)
+        points_world = torch.addmm(t_c2w, points_cam, R_c2w.T)
 
-        # Find out-of-bound points
-        out_of_bound_mask = ((points_world < bound_min) | (points_world > bound_max)).any(dim=-1)  # (N,)
+        # 4. Vectorized Out-of-Bounds Check
+        # Avoids multiple passes over the data
+        oob_mask = (points_world < bound_min).any(-1) | (points_world > bound_max).any(-1)
 
-        if out_of_bound_mask.any():
-            new_points_cam = self._project_points_to_boundary(
-                bound_min, bound_max, points_world[out_of_bound_mask]
-            )
-            # Write back only the out-of-bound points via direct integer indexing
-            oob_indices = valid_indices[out_of_bound_mask]  # (M, 2)
-            self.points[oob_indices[:, 0], oob_indices[:, 1]] = new_points_cam
-            self.depth[oob_indices[:, 0], oob_indices[:, 1]] = new_points_cam[:, 2]
+        if not oob_mask.any():
+            return
+
+        # Filter only OOB points for the projection math
+        pts_to_proj = points_world[oob_mask]
+        origin = t_c2w.view(1, 3) # Camera center in World Space
+
+        # 5. Ray-AABB Intersection (The "Slab" Method)
+        # Direction from camera origin to the out-of-bounds point
+        ray_dir = pts_to_proj - origin
+
+        # Use 1e-8 to prevent division by zero for axis-aligned rays
+        safe_dir = torch.where(ray_dir.abs() < 1e-8, torch.sign(ray_dir) * 1e-8, ray_dir)
+        inv_dir = 1.0 / safe_dir
+        t_near = (bound_min - origin) * inv_dir
+        t_far = (bound_max - origin) * inv_dir
+
+        # The intersection exit point is the minimum of the maximum distances
+        # across the X, Y, and Z planes.
+        t_exit = torch.min(torch.max(t_near, t_far), dim=-1)[0]
+
+        # 6. Project and Move back to Camera Space
+        # (t_exit * 0.9999) keeps the point just inside the volume
+        projected_world = origin + (t_exit.unsqueeze(-1) * 0.9999) * ray_dir
+
+        # World to Cam: (P_world - t_c2w) @ R_c2w
+        # Optimized: since (projected_world - t_c2w) is just the scaled ray_dir
+        projected_cam = (projected_world - t_c2w) @ R_c2w
+
+        # 7. Final Write-back
+        # Combine masks to index the original tensors only once
+        final_indices = mask.clone().to(self.points.device, non_blocking=True)
+        final_indices[mask] = oob_mask.to(self.points.device, non_blocking=True)
+
+        self.points[final_indices] = projected_cam.to(self.points.device, non_blocking=True)
+        self.depth[final_indices] = projected_cam[:, 2].to(self.depth.device, non_blocking=True)
 
     # def apply_bound(self, bound_min: torch.Tensor, bound_max: torch.Tensor):
     #     points = self.points @ self.ref_pose[:3, :3].T + self.ref_pose[:3, 3]
