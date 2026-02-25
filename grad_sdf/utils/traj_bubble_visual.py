@@ -75,6 +75,15 @@ class TrajBubbleVisualizer:
         self.mesh.color(self.mesh_color).alpha(self.mesh_opacity)
         actors.append(self.mesh)
 
+        # --- Bubbles (render first so trajectory appears on top) ---
+        if self.bubble.shape[0] > 0:
+            for i in range(self.bubble.shape[0]):
+                center = self.bubble[i, :3]
+                radius = self.bubble[i, 3]
+                sphere = vedo.Sphere(pos=center, r=radius, res=16)
+                sphere.color(self.bubble_color).alpha(1.0 - self.bubble_transparency)
+                actors.append(sphere)
+
         # --- Trajectory ---
         if self.traj.shape[0] > 0:
             # Draw trajectory points
@@ -91,15 +100,6 @@ class TrajBubbleVisualizer:
             end_pt = vedo.Point(self.traj[-1], c=self.traj_color, r=self.traj_point_size * 2)
             actors.append(start_pt)
             actors.append(end_pt)
-
-        # --- Bubbles ---
-        if self.bubble.shape[0] > 0:
-            for i in range(self.bubble.shape[0]):
-                center = self.bubble[i, :3]
-                radius = self.bubble[i, 3]
-                sphere = vedo.Sphere(pos=center, r=radius, res=16)
-                sphere.color(self.bubble_color).alpha(1.0 - self.bubble_transparency)
-                actors.append(sphere)
 
         # --- Show ---
         plotter = vedo.Plotter()
