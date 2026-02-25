@@ -43,6 +43,7 @@ class DepthFrame(Frame):
         ref_pose: torch.Tensor,
         max_depth: float,
         min_depth: float,
+        device: str = None,
     ) -> None:
         """
         Args:
@@ -73,6 +74,13 @@ class DepthFrame(Frame):
         self.rays_d: torch.Tensor = self.get_rays(K=self.K)  # (H, W, 3) in camera coordinates
         self.points: torch.Tensor = self.rays_d * self.depth[..., None]  # (H, W, 3) in camera coordinates
         self.valid_mask: torch.Tensor = (self.depth > min_depth) & (self.depth < max_depth)  # (H, W) depth > 0
+
+        if device is not None:
+            self.depth = self.depth.to(device)
+            self.ref_pose = self.ref_pose.to(device)
+            self.rays_d = self.rays_d.to(device)
+            self.points = self.points.to(device)
+            self.valid_mask = self.valid_mask.to(device)
 
     def get_frame_index(self):
         return self.stamp
@@ -123,7 +131,7 @@ class DepthFrame(Frame):
         return self.valid_mask
 
     @torch.no_grad()
-    def apply_bound(self, bound_min: torch.Tensor, bound_max: torch.Tensor, device: str):
+    def apply_bound(self, bound_min: torch.Tensor, bound_max: torch.Tensor):
         """Applies a bounding box constraint to points in the frame.
 
         Any points in camera coordinates that, when transformed to world coordinates,
@@ -133,22 +141,19 @@ class DepthFrame(Frame):
         Args:
             bound_min (torch.Tensor): Lower corner (3,) of the bounding box, in world coordinates.
             bound_max (torch.Tensor): Upper corner (3,) of the bounding box, in world coordinates.
-            device (str): Device for tensors and computation.
         """
-        bound_min = bound_min.to(device, non_blocking=True)
-        bound_max = bound_max.to(device, non_blocking=True)
+        device = self.points.device
+        bound_min = bound_min.to(device)
+        bound_max = bound_max.to(device)
 
         mask = self.valid_mask
         if not mask.any():
             return
 
-        pose = self.ref_pose.to(device, non_blocking=True)
-        R_c2w = pose[:3, :3]
-        t_c2w = pose[:3, 3]
+        R_c2w = self.ref_pose[:3, :3]
+        t_c2w = self.ref_pose[:3, 3]
 
-        points = self.points.to(device, non_blocking=True)
-        mask = mask.to(device, non_blocking=True)
-        points_cam = points[mask]
+        points_cam = self.points[mask]
         points_world = torch.addmm(t_c2w, points_cam, R_c2w.T)
 
         # Out-of-bounds mask
@@ -174,10 +179,10 @@ class DepthFrame(Frame):
         projected_cam = (projected_world - t_c2w) @ R_c2w
 
         # Write projected points back
-        final_indices = mask.clone().to(self.points.device, non_blocking=True)
-        final_indices[mask] = oob_mask.to(self.points.device, non_blocking=True)
-        self.points[final_indices] = projected_cam.to(self.points.device, non_blocking=True)
-        self.depth[final_indices] = projected_cam[:, 2].to(self.depth.device, non_blocking=True)
+        full_mask = mask.clone()
+        full_mask[mask] = oob_mask
+        self.points[full_mask] = projected_cam
+        self.depth[full_mask] = projected_cam[:, 2]
 
     # def apply_bound(self, bound_min: torch.Tensor, bound_max: torch.Tensor):
     #     points = self.points @ self.ref_pose[:3, :3].T + self.ref_pose[:3, 3]
