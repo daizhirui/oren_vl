@@ -47,7 +47,7 @@ class SdfNetwork(nn.Module):
         voxel_indices, sdf_prior, residual_features = self.octree(points, voxel_indices)
         if residual_features is not None:
             residual_network_input = torch.cat([sdf_prior.unsqueeze(-1).detach(), residual_features], dim=-1)
-            sdf_residual = self.residual(residual_network_input)
+            sdf_residual = self.residual(residual_network_input).squeeze(-1)
             sdf_pred = sdf_prior.detach() + sdf_residual
         else:
             sdf_pred = sdf_prior.detach()

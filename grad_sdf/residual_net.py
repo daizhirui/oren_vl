@@ -1,6 +1,5 @@
 from dataclasses import dataclass
 
-import tinycudann as tcnn
 import torch
 import torch.nn as nn
 
@@ -28,17 +27,17 @@ class ResidualNet(nn.Module):
         self.cfg = cfg
         self.bound_min = cfg.bound_min
         self.bound_max = cfg.bound_max
-        self.residual_net = tcnn.Network(
-            n_input_dims=cfg.input_feature_dim + 1,
-            n_output_dims=1,
-            network_config={
-                "otype": "FullyFusedMLP",
-                "activation": cfg.mlp_activation,
-                "output_activation": "None",
-                "n_neurons": cfg.hidden_dims,
-                "n_hidden_layers": cfg.n_hidden_layers,
-            },
-        )
+
+        activation = getattr(nn, cfg.mlp_activation)
+
+        layers = []
+        in_dim = cfg.input_feature_dim + 1
+        for _ in range(cfg.n_hidden_layers):
+            layers.append(nn.Linear(in_dim, cfg.hidden_dims))
+            layers.append(activation())
+            in_dim = cfg.hidden_dims
+        layers.append(nn.Linear(in_dim, 1))
+        self.residual_net = nn.Sequential(*layers)
 
     def get_sdf(self, residual_features: torch.Tensor):
         sdf = self.residual_net(residual_features) * self.cfg.output_sdf_scale

@@ -252,7 +252,7 @@ class GradSDFMappingNode(Node):
             min_depth=self.cfg.data.dataset_args['min_depth'],
         )
         with self.trainer.timer_apply_bound:
-            frame.apply_bound(self.bound_min, self.bound_max)
+            frame.apply_bound(self.bound_min, self.bound_max, device=self.cfg.device)
 
         # Get points in world frame
         points_world = frame.get_points(to_world_frame=True, device=self.cfg.device)
