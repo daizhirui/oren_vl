@@ -1,6 +1,6 @@
 import vedo
 import numpy as np
-from typing import List, Optional
+from typing import List, Optional, Union
 
 
 class TrajBubbleVisualizer:
@@ -8,12 +8,12 @@ class TrajBubbleVisualizer:
 
     def __init__(
         self,
-        mesh_color: str = "grey",
+        mesh_color: Union[str, List[float]] = "grey",
         mesh_opacity: float = 0.3,
-        traj_color: str = "red",
+        traj_color: Union[str, List[float]] = "red",
         traj_point_size: int = 8,
         traj_line_width: int = 3,
-        bubble_color: Optional[List[float]] = None,
+        bubble_color: Union[str, List[float]] = "green",
         bubble_transparency: float = 0.5,
     ):
         self.mesh_color = mesh_color
@@ -21,7 +21,7 @@ class TrajBubbleVisualizer:
         self.traj_color = traj_color
         self.traj_point_size = traj_point_size
         self.traj_line_width = traj_line_width
-        self.bubble_color = bubble_color if bubble_color is not None else [0, 1, 0]
+        self.bubble_color = bubble_color
         self.bubble_transparency = bubble_transparency
 
         self.mesh: Optional[vedo.Mesh] = None
@@ -87,8 +87,8 @@ class TrajBubbleVisualizer:
                 actors.append(traj_line)
 
             # Mark start and end points
-            start_pt = vedo.Point(self.traj[0], c="green", r=self.traj_point_size * 2)
-            end_pt = vedo.Point(self.traj[-1], c="blue", r=self.traj_point_size * 2)
+            start_pt = vedo.Point(self.traj[0], c=self.traj_color, r=self.traj_point_size * 2)
+            end_pt = vedo.Point(self.traj[-1], c=self.traj_color, r=self.traj_point_size * 2)
             actors.append(start_pt)
             actors.append(end_pt)
 
