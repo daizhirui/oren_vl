@@ -16,6 +16,7 @@ class SemiSparseOctree(SemiSparseOctreeBase):
         sso_setting.tree_depth = cfg.tree_depth
         sso_setting.semi_sparse_depth = cfg.semi_sparse_depth
         sso_setting.init_voxel_num = cfg.init_voxel_num
+        sso_setting.independent_smallest_leaf_vertex = cfg.independent_smallest_leaf_vertex
         sso_setting.cache_voxel_centers = True
         self.sso = SemiSparseOctreeF(sso_setting)
         self.key_offset = 1 << (self.cfg.tree_depth - 1)

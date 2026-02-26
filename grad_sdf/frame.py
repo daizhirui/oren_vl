@@ -193,12 +193,6 @@ class DepthFrame(Frame):
         mask = points >= bound_min.view(1, 1, 3)
         mask = mask & (points <= bound_max.view(1, 1, 3))
         mask = mask.all(dim=-1)
-        if mask.any():
-            # We want the min/max across the H and W dimensions, not the channel dim
-            # Use .view(-1, 3) to flatten spatial dims for easy min/max calculation
-            actual_min = points.view(-1, 3).min(dim=0)[0]
-            actual_max = points.view(-1, 3).max(dim=0)[0]
-            print(f'Actual Point Bounds - Min: {actual_min}, Max: {actual_max}')
         self.valid_mask = self.valid_mask & mask
 
     def sample_points(

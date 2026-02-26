@@ -32,6 +32,7 @@ model:
         skip_insertion_if_exists: true # speed up a bit
         residual_feature_dim: 1
         residual_num_levels: 1
+        independent_smallest_leaf_vertex: true
         # gradient_augmentation: true
     residual_net_cfg:
         identifier: grad_sdf.residual_net.ResidualNetConfig
