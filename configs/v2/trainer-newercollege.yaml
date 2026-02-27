@@ -1,13 +1,13 @@
 identifier: grad_sdf.trainer_config.TrainerConfig
 seed: 12345
 log_dir: logs
-exp_name: replica_for_planning
+exp_name: IROS-Newercollege
 device: cuda
 data:
     identifier: grad_sdf.dataset.data_config.DataConfig
-    dataset_name: replica
+    dataset_name: newercollege
     dataset_args:
-        data_path: "data/replica/room0"
+        data_path: "data/newer_college_new"
         min_depth: 0.0
         max_depth: -1.0
         offset: [0.0, 0.0, 0.0]
@@ -27,8 +27,8 @@ model:
     identifier: grad_sdf.model.SdfNetworkConfig
     octree_cfg:
         identifier: grad_sdf.octree_config.OctreeConfig
-        resolution: 0.1
-        tree_depth: 8 # 0.1*2^8=25.6m
+        resolution: 0.7
+        tree_depth: 8 # 0.7*2^8=112m
         semi_sparse_depth: 5
         init_voxel_num: 200000
         insertion_threshold: 3

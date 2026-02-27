@@ -15,7 +15,7 @@ data:
 key_frame_set:
     identifier: grad_sdf.key_frame_set.KeyFrameSetConfig
     insert_method: intersection
-    insert_interval: 10
+    insert_interval: 50
     insert_ratio: 0.85
     frame_selection: multiple_max_set_coverage
     selection_window_size: 16
@@ -80,7 +80,7 @@ sample_rays:
     depth_max: 5.0
     surface_margin: 0.09
     sigma_s: 0.03
-batch_size: 204800
+batch_size: 20480
 lr: 0.005
 grad_method: finite_difference
 finite_difference_eps: 0.01

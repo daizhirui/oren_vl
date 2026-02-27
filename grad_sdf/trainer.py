@@ -27,8 +27,8 @@ class Trainer:
         self.data_stream = get_dataset(cfg.data.dataset_name, cfg.data.dataset_args)
 
         # set the bound automatically
-        self.cfg.model.residual_net_cfg.bound_min = (self.data_stream.bound_min - 0.15).cpu().tolist()
-        self.cfg.model.residual_net_cfg.bound_max = (self.data_stream.bound_max + 0.15).cpu().tolist()
+        self.cfg.model.residual_net_cfg.bound_min = (self.data_stream.bound_min - 0.1).cpu().tolist()
+        self.cfg.model.residual_net_cfg.bound_max = (self.data_stream.bound_max + 0.1).cpu().tolist()
 
         if self.cfg.data.end_frame < 0:
             self.cfg.data.end_frame = len(self.data_stream)
@@ -78,9 +78,7 @@ class Trainer:
         self.timer_find_voxel_indices_sampled_xyz = GpuTimer(
             "find voxel indices for sampled_xyz", enable=timer_on, verbose=verbose
         )
-        self.timer_training_iteration = GpuTimer(
-            "training iteration", enable=timer_on, verbose=verbose
-        )
+        self.timer_training_iteration = GpuTimer("training iteration", enable=timer_on, verbose=verbose)
 
         self.training_iteration_end_callback: Callable[[Trainer], None] = None  # type: ignore
         self.training_frame_start_callback: Callable[[Trainer, Frame], bool] = None  # type: ignore
@@ -224,16 +222,12 @@ class Trainer:
             self.samples.sampled_xyz.requires_grad_(True)
         else:
             with self.timer_compute_offset_points:
-                offset_points_plus, offset_points_minus = (
-                    self.compute_offset_points_for_finite_diff(self.samples.sampled_xyz)
+                offset_points_plus, offset_points_minus = self.compute_offset_points_for_finite_diff(
+                    self.samples.sampled_xyz
                 )
             with self.timer_find_voxel_indices_offset_points:
-                voxel_indices_plus = self.find_voxel_indices(
-                    offset_points_plus
-                )  # (n, m, 3)
-                voxel_indices_minus = self.find_voxel_indices(
-                    offset_points_minus
-                )  # (n, m, 3)
+                voxel_indices_plus = self.find_voxel_indices(offset_points_plus)  # (n, m, 3)
+                voxel_indices_minus = self.find_voxel_indices(offset_points_minus)  # (n, m, 3)
         with self.timer_find_voxel_indices_sampled_xyz:
             voxel_indices = self.find_voxel_indices(self.samples.sampled_xyz)  # (n, m)
             assert voxel_indices.min() != -1, "voxel_indices has -1"
@@ -253,24 +247,18 @@ class Trainer:
                         j = min(i + bs, num_rays)
                         points = self.samples.sampled_xyz[i:j]  # (b, m, 3)
                         voxel_indices_batch = voxel_indices[i:j]
-                        _, sdf_prior, _, sdf_pred = self.model(
-                            points, voxel_indices_batch
-                        )
+                        _, sdf_prior, _, sdf_pred = self.model(points, voxel_indices_batch)
                         if self.cfg.grad_method == "autodiff":
                             sdf_grad = self.compute_sdf_grad_autodiff(points, sdf_pred)
-                            sdf_prior_grad = self.compute_sdf_grad_autodiff(
-                                points, sdf_prior
-                            )
+                            sdf_prior_grad = self.compute_sdf_grad_autodiff(points, sdf_prior)
                         else:
-                            sdf_grad, sdf_prior_grad = (
-                                self.compute_sdf_grad_finite_difference(
-                                    points=points,
-                                    offset_points_plus=offset_points_plus[i:j],
-                                    offset_points_minus=offset_points_minus[i:j],
-                                    voxel_indices_plus=voxel_indices_plus[i:j],
-                                    voxel_indices_minus=voxel_indices_minus[i:j],
-                                )[:2]
-                            )
+                            sdf_grad, sdf_prior_grad = self.compute_sdf_grad_finite_difference(
+                                points=points,
+                                offset_points_plus=offset_points_plus[i:j],
+                                offset_points_minus=offset_points_minus[i:j],
+                                voxel_indices_plus=voxel_indices_plus[i:j],
+                                voxel_indices_minus=voxel_indices_minus[i:j],
+                            )[:2]
 
                         sdf_pred_all.append(sdf_pred)
                         sdf_prior_all.append(sdf_prior)  # (b, m)
@@ -376,15 +364,9 @@ class Trainer:
         """
         eps = self.cfg.finite_difference_eps
         if offset_points_plus is None or offset_points_minus is None:
-            offset_points_plus, offset_points_minus = (
-                self.compute_offset_points_for_finite_diff(points)
-            )
-        voxel_indices_plus, sdf_prior_plus, _, sdf_plus = self.model(
-            offset_points_plus, voxel_indices_plus
-        )
-        voxel_indices_minus, sdf_prior_minus, _, sdf_minus = self.model(
-            offset_points_minus, voxel_indices_minus
-        )
+            offset_points_plus, offset_points_minus = self.compute_offset_points_for_finite_diff(points)
+        voxel_indices_plus, sdf_prior_plus, _, sdf_plus = self.model(offset_points_plus, voxel_indices_plus)
+        voxel_indices_minus, sdf_prior_minus, _, sdf_minus = self.model(offset_points_minus, voxel_indices_minus)
 
         grad = (sdf_plus - sdf_minus) / (2 * eps)
         prior_grad = (sdf_prior_plus - sdf_prior_minus) / (2 * eps)
@@ -472,9 +454,7 @@ class Trainer:
 
                 slice_config = slice_configs[axis]
                 axis_name = slice_config["axis_name"]
-                slice_bound = slice_result[
-                    "slice_bound"
-                ].tolist()  # (bound_min, bound_max) for the two axes
+                slice_bound = slice_result["slice_bound"].tolist()  # (bound_min, bound_max) for the two axes
 
                 for slice_name in ["sdf_prior", "sdf_residual", "sdf"]:
                     slice_values = slice_result[slice_name].cpu().numpy()
@@ -497,9 +477,7 @@ class Trainer:
                     plt.tight_layout()
                     img_path = f"slice_{axis_name}_{slice_name}.png"
                     if epoch_dir is not None:
-                        img_path = os.path.join(
-                            self.logger.misc_dir, epoch_dir, img_path
-                        )
+                        img_path = os.path.join(self.logger.misc_dir, epoch_dir, img_path)
                         os.makedirs(os.path.dirname(img_path), exist_ok=True)
                     else:
                         img_path = os.path.join(self.logger.misc_dir, img_path)
