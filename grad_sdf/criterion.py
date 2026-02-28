@@ -29,6 +29,7 @@ class CriterionConfig(ConfigABC):
     sign_loss_free_weight: float = 0.0
     sign_loss_occ_weight: float = 0.0
     sign_loss_temperature: float = 100.0
+    perturbation_loss_exp_penalty: float = 1.0
 
 
 class Criterion(nn.Module):
@@ -188,7 +189,7 @@ class Criterion(nn.Module):
         below_lower = torch.clamp(perturb_loss_lowerbound - pred_sdf_perturb, min=0)
 
         # Use exponential penalty for below lower bound to emphasize constraint
-        below_lower_loss = torch.exp(10 * below_lower) - 1
+        below_lower_loss = torch.exp(self.cfg.perturbation_loss_exp_penalty * below_lower) - 1
         perturb_loss = above_upper_loss + below_lower_loss
 
         return perturb_loss.mean()

@@ -35,7 +35,7 @@ model:
         skip_insertion_if_exists: true # speed up a bit
         residual_feature_dim: 3
         residual_num_levels: 1
-        # gradient_augmentation: true
+        gradient_augmentation: true
     residual_net_cfg:
         identifier: grad_sdf.residual_net.ResidualNetConfig
         bound_min: [-10, -10, -10] # will be overwritten by the dataset args
@@ -63,6 +63,7 @@ criterion:
     perturbation_loss_type: L1
     eikonal_loss_type: L1
     projection_loss_type: L1
+    perturbation_loss_exp_penalty: 10.0
     heat_loss_weight: 0.0
     heat_loss_lambda: 4.0
     sign_loss_free_weight: 0.0
