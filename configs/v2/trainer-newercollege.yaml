@@ -7,7 +7,7 @@ data:
     identifier: grad_sdf.dataset.data_config.DataConfig
     dataset_name: newercollege
     dataset_args:
-        data_path: "data/newercollege-lidar-rotated"
+        data_path: "data/newercollege-iros"
         min_depth: 0.8
         max_depth: 40.0
         offset: [0.0, 0.0, 0.0]
@@ -49,14 +49,14 @@ criterion:
     identifier: grad_sdf.criterion.CriterionConfig
     boundary_loss_weight: 100
     perturbation_loss_weight: 100
-    eikonal_loss_surface_weight: 60
-    eikonal_loss_perturbation_weight: 40
+    eikonal_loss_surface_weight: 30
+    eikonal_loss_perturbation_weight: 50
     eikonal_loss_space_weight: 100
     projection_loss_weight: 100
     boundary_loss_prior_weight: 100
     perturbation_loss_prior_weight: 100
-    eikonal_loss_surface_prior_weight: 60
-    eikonal_loss_perturbation_prior_weight: 40
+    eikonal_loss_surface_prior_weight: 30
+    eikonal_loss_perturbation_prior_weight: 50
     eikonal_loss_space_prior_weight: 100
     projection_loss_prior_weight: 100
     boundary_loss_type: L1

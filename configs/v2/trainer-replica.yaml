@@ -44,7 +44,7 @@ model:
         hidden_dims: 32
         n_hidden_layers: 2
         output_sdf_scale: 0.1
-        input_feature_dim: 1
+        input_feature_dim: 1 # will be overwritten by octree_cfg residual_feature_dim * residual_num_levels
 criterion:
     identifier: grad_sdf.criterion.CriterionConfig
     boundary_loss_weight: 1000

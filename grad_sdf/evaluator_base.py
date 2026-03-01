@@ -1,10 +1,26 @@
 import os
 from typing import Callable, Dict, List, Optional
 
+import matplotlib.pyplot as plt
 import trimesh
 from scipy.spatial import cKDTree
 
 from grad_sdf import MarchingCubes, np, o3d, torch
+
+
+def _load_pointcloud(path: str) -> np.ndarray:
+    """Load point cloud from .npy, .ply, or .pcd. Returns (N, 3) float array."""
+    path_lower = path.lower()
+    if path_lower.endswith(".npy"):
+        pts = np.load(path).astype(np.float64)
+    elif path_lower.endswith(".ply") or path_lower.endswith(".pcd"):
+        pcd = o3d.io.read_point_cloud(path)
+        pts = np.asarray(pcd.points, dtype=np.float64)
+    else:
+        raise ValueError(f"Unsupported point cloud format: {path}. Use .npy, .ply, or .pcd")
+    if pts.ndim != 2 or pts.shape[1] != 3:
+        raise ValueError(f"Point cloud must be (N, 3), got shape {pts.shape}")
+    return pts
 
 
 class EvaluatorBase:
@@ -149,6 +165,97 @@ class EvaluatorBase:
             f1=f1,
             threshold=threshold,
             num_samples=num_samples,
+            seed=seed,
+        )
+
+    @staticmethod
+    def mesh_metrics_pointcloud_gt(
+        pred_mesh_path: str,
+        gt_pointcloud_path: str,
+        gt_pointcloud_offset: List[float] | None = None,
+        threshold: float = 0.05,
+        num_samples: int = 200_000,
+        seed: int = 0,
+    ):
+        """
+        Compute mesh metrics with point cloud as ground truth.
+
+        Prediction is a mesh (sampled to num_pred_samples points). Ground truth is a point cloud
+        loaded from file (.npy, .ply, or .pcd), used as-is.
+
+        Args:
+            pred_mesh_path: Path to predicted mesh file.
+            gt_pointcloud_path: Path to ground-truth point cloud (.npy, .ply, or .pcd).
+            gt_pointcloud_offset: Optional [x, y, z] to translate GT points.
+            threshold: Distance threshold for precision/recall/completion_ratio.
+            num_samples: Number of points to sample on the predicted mesh.
+            seed: Random seed for sampling.
+
+        Returns:
+            dict with completion_ratio, completion, accuracy, chamfer, precision, recall, f1,
+            threshold, num_samples, num_gt_points, seed.
+        """
+        pred_mesh = trimesh.load_mesh(pred_mesh_path)
+        gt_pts_all = _load_pointcloud(gt_pointcloud_path)
+        if gt_pointcloud_offset is not None:
+            gt_pts_all = gt_pts_all + np.array(gt_pointcloud_offset, dtype=gt_pts_all.dtype)
+
+        pred_pts = trimesh.sample.sample_surface(pred_mesh, num_samples, seed=seed)[0]
+        num_gt = gt_pts_all.shape[0]
+        if gt_pts_all.shape[0] > num_samples:
+            rng = np.random.default_rng(seed)
+            indices = rng.choice(gt_pts_all.shape[0], num_samples, replace=False)
+            gt_pts = gt_pts_all[indices]
+
+        gt_tree = cKDTree(gt_pts_all)
+        pred_tree = cKDTree(pred_pts)
+
+        dist_pred_to_gt, _ = gt_tree.query(pred_pts, k=1, workers=-1)
+        dist_gt_to_pred, _ = pred_tree.query(gt_pts, k=1, workers=-1)
+
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
+        ax1.hist(dist_pred_to_gt, bins=50, color="steelblue", edgecolor="black", alpha=0.7)
+        ax1.set_xlabel("Distance")
+        ax1.set_ylabel("Count")
+        ax1.set_title("dist_pred_to_gt (pred → nearest GT)")
+        ax1.axvline(threshold, color="red", linestyle="--", label=f"threshold={threshold}")
+        ax1.legend()
+        ax2.hist(dist_gt_to_pred, bins=50, color="coral", edgecolor="black", alpha=0.7)
+        ax2.set_xlabel("Distance")
+        ax2.set_ylabel("Count")
+        ax2.set_title("dist_gt_to_pred (GT → nearest pred)")
+        ax2.axvline(threshold, color="red", linestyle="--", label=f"threshold={threshold}")
+        ax2.legend()
+        plt.tight_layout()
+        plt.show()
+
+        
+
+        completion_ratio = np.mean(dist_gt_to_pred < threshold).item()
+        completion = np.mean(dist_gt_to_pred)
+
+        accuracy = np.mean(dist_pred_to_gt)
+        chamfer = (completion + accuracy) / 2.0
+
+        tp = np.sum(dist_pred_to_gt < threshold).item()
+        fp = num_samples - tp
+        fn = np.sum(dist_gt_to_pred >= threshold).item()
+
+        precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+        recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+        f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
+
+        return dict(
+            completion_ratio=completion_ratio,
+            completion=completion,
+            accuracy=accuracy,
+            chamfer=chamfer,
+            precision=precision,
+            recall=recall,
+            f1=f1,
+            threshold=threshold,
+            num_samples=num_samples,
+            num_gt_points=num_gt,
             seed=seed,
         )
 
