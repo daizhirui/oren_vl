@@ -413,7 +413,7 @@ class EvaluatorBase:
         results["grid_bound"] = torch.tensor([bound_min, bound_max])
         results["grid_shape"] = torch.tensor(grid_points.shape[:-1], dtype=torch.long)
         results["grid_resolution"] = torch.tensor(grid_resolution)
-        results["mask"] = mask.to(self.device if device is None else device)  # type: ignore
+        results["mask"] = mask.to(self.device if device is None else device) if mask is not None else None
 
         return results
 
