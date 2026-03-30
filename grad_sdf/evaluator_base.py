@@ -1,7 +1,8 @@
 import os
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Tuple
 
 import matplotlib.pyplot as plt
+from ruamel import yaml
 import trimesh
 from scipy.spatial import cKDTree
 
@@ -21,6 +22,33 @@ def _load_pointcloud(path: str) -> np.ndarray:
     if pts.ndim != 2 or pts.shape[1] != 3:
         raise ValueError(f"Point cloud must be (N, 3), got shape {pts.shape}")
     return pts
+
+
+def _load_bbox(bbox_def_file: str | None) -> Tuple[trimesh.Trimesh | None, dict | None]:
+    if bbox_def_file is None:
+        return None, None
+
+    with open(bbox_def_file, "r") as f:
+        bbox_def = yaml.safe_load(f)
+    bbox_size = bbox_def["size"]
+    bbox_center = bbox_def["center"]
+    bbox_rotation = bbox_def["rotation"]  # quaternion [w, x, y, z]
+
+    bbox_extents = np.array(bbox_size)
+    bbox_pose = trimesh.transformations.quaternion_matrix(bbox_rotation)
+    bbox_pose[:3, 3] = bbox_center
+    bbox = trimesh.creation.box(extents=bbox_extents, transform=bbox_pose)
+
+    bbox_def = dict(size=bbox_size, pose=bbox_pose)
+
+    return bbox, bbox_def
+
+
+def _crop_to_bbox(mesh: trimesh.Trimesh, bbox: Optional[trimesh.Trimesh]) -> trimesh.Trimesh:
+    if bbox is None:
+        return mesh
+    mesh = mesh.slice_plane(bbox.facets_origin, -bbox.facets_normal)
+    return mesh
 
 
 class EvaluatorBase:
@@ -208,14 +236,35 @@ class EvaluatorBase:
         pred_mesh_path: str,
         gt_mesh_path: str,
         gt_mesh_offset: List[float] | None = None,
+        bbox_def_file: str | None = None,
         threshold: float = 0.05,
         num_samples: int = 200_000,
         seed: int = 0,
-    ):
+    ) -> dict:
+        """
+        Compute mesh metrics with ground truth mesh as reference.
+
+        Args:
+            pred_mesh_path: Path to predicted mesh file.
+            gt_mesh_path: Path to ground-truth mesh file.
+            gt_mesh_offset: Optional [x, y, z] to translate GT mesh vertices.
+            bbox_def_file: Optional path to a file defining the bounding box for evaluation, in case the meshes are not well-aligned.
+            threshold: Distance threshold for precision/recall/completion_ratio.
+            num_samples: Number of points to sample on the predicted mesh for evaluation.
+            seed: Random seed for sampling.
+
+        Returns:
+            dict with completion_ratio, completion, accuracy, chamfer, precision, recall, f1,
+            threshold, num_samples, seed.
+        """
         pred_mesh = trimesh.load_mesh(pred_mesh_path)
         gt_mesh = trimesh.load_mesh(gt_mesh_path)
         if gt_mesh_offset is not None:
             gt_mesh.apply_translation(gt_mesh_offset)
+
+        bbox, bbox_def = _load_bbox(bbox_def_file)
+        pred_mesh = _crop_to_bbox(pred_mesh, bbox)
+        gt_mesh = _crop_to_bbox(gt_mesh, bbox)
 
         pred_pts = trimesh.sample.sample_surface(pred_mesh, num_samples, seed=seed)[0]
         gt_pts = trimesh.sample.sample_surface(gt_mesh, num_samples, seed=seed)[0]
@@ -258,6 +307,7 @@ class EvaluatorBase:
         pred_mesh_path: str,
         gt_pointcloud_path: str,
         gt_pointcloud_offset: List[float] | None = None,
+        bbox_def_file: str | None = None,
         threshold: float = 0.05,
         num_samples: int = 200_000,
         seed: int = 0,
@@ -272,6 +322,7 @@ class EvaluatorBase:
             pred_mesh_path: Path to predicted mesh file.
             gt_pointcloud_path: Path to ground-truth point cloud (.npy, .ply, or .pcd).
             gt_pointcloud_offset: Optional [x, y, z] to translate GT points.
+            bbox_def_file: Path to bounding box definition file (optional).
             threshold: Distance threshold for precision/recall/completion_ratio.
             num_samples: Number of points to sample on the predicted mesh.
             seed: Random seed for sampling.
@@ -284,6 +335,12 @@ class EvaluatorBase:
         gt_pts_all = _load_pointcloud(gt_pointcloud_path)
         if gt_pointcloud_offset is not None:
             gt_pts_all = gt_pts_all + np.array(gt_pointcloud_offset, dtype=gt_pts_all.dtype)
+
+        bbox, bbox_def = _load_bbox(bbox_def_file)
+        pred_mesh = _crop_to_bbox(pred_mesh, bbox)
+        if bbox is not None:
+            points = np.asarray(gt_pts_all)
+            bbox_
 
         pred_pts = trimesh.sample.sample_surface(pred_mesh, num_samples, seed=seed)[0]
         num_gt = gt_pts_all.shape[0]

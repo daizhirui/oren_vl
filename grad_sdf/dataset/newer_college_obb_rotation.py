@@ -23,10 +23,17 @@ args = parser.parse_args()
 
 os.makedirs(args.output_dir, exist_ok=True)
 
-output_mesh = os.path.join(args.output_dir, "gt-mesh.ply")
-output_traj = os.path.join(args.output_dir, "poses.txt")
+input_mesh = os.path.join(args.dataset_dir, "gt-mesh.ply")
+input_gt_pcd = os.path.join(args.dataset_dir, "gt-pointcloud.ply")
+input_all_pts = os.path.join(args.dataset_dir, "all_points.ply")
+input_traj = os.path.join(args.dataset_dir, "traj.txt")
 
-tri_mesh = trimesh.load(os.path.join(args.dataset_dir, "gt-mesh.ply"))
+output_mesh = os.path.join(args.output_dir, "gt-mesh.ply")
+output_gt_pcd = os.path.join(args.output_dir, "gt-pointcloud.ply")
+output_all_pts = os.path.join(args.output_dir, "all_points.ply")
+output_traj = os.path.join(args.output_dir, "traj.txt")
+
+tri_mesh = trimesh.load(input_mesh)
 mesh: o3d.geometry.TriangleMesh = o3d.geometry.TriangleMesh()
 mesh.vertices = o3d.utility.Vector3dVector(np.array(tri_mesh.vertices).astype(np.float64))
 mesh.triangles = o3d.utility.Vector3iVector(np.array(tri_mesh.faces).astype(np.int32))
@@ -73,6 +80,7 @@ mesh_rotated = o3d.geometry.TriangleMesh(mesh)
 mesh_rotated.translate(-obb.center)  # shift the mesh to origin first
 mesh_rotated.rotate(R, center=(0, 0, 0))  # then rotate
 
+# save the transformation matrix from the rotated system back to the original system
 T_rotated_to_original = np.eye(4)
 T_rotated_to_original[:3, :3] = R.T
 T_rotated_to_original[:3, 3] = obb.center
@@ -84,13 +92,14 @@ print("transformed AABB min value:", aabb_transformed.min_bound)
 print("transformed AABB max value:", aabb_transformed.max_bound)
 print("transformed AABB range:", aabb_transformed.max_bound - aabb_transformed.min_bound)
 print("original OBB range:", obb.extent)
-# calculate the offset to make all coordinates positive
-offset = np.abs(aabb_transformed.min_bound.min()) + 0.15  # add a small margin
-print("offset:", offset)
-bound_min = aabb_transformed.min_bound + offset - 0.15
-bound_max = aabb_transformed.max_bound + offset + 0.15
-bound = [[round(float(mn), 2), round(float(mx), 2)] for mn, mx in zip(bound_min, bound_max)]
-print("bound:", bound)
+
+# # calculate the offset to make all coordinates positive
+# offset = np.abs(aabb_transformed.min_bound.min()) + 0.15  # add a small margin
+# print("offset:", offset)
+# bound_min = aabb_transformed.min_bound + offset - 0.15
+# bound_max = aabb_transformed.max_bound + offset + 0.15
+# bound = [[round(float(mn), 2), round(float(mx), 2)] for mn, mx in zip(bound_min, bound_max)]
+# print("bound:", bound)
 
 # save the rotated mesh as the output filename
 success = o3d.io.write_triangle_mesh(output_mesh, mesh_rotated)
@@ -99,12 +108,34 @@ if success:
 else:
     print(f"save failed: {output_mesh}")
 
-# process the corresponding poses.txt file
-camera_poses = []
-if os.path.exists(os.path.join(args.dataset_dir, "poses.txt")):
-    print(f"processing poses.txt file: {os.path.join(args.dataset_dir, "poses.txt")}")
+# save the transformed gt point cloud
+input_gt_pcd = os.path.join(args.dataset_dir, "gt-pointcloud.ply")
+if os.path.exists(input_gt_pcd):
+    pcd = o3d.io.read_point_cloud(input_gt_pcd)
+    pcd.translate(-obb.center)
+    pcd.rotate(R, center=(0, 0, 0))
+    o3d.io.write_point_cloud(output_gt_pcd, pcd)
+    print(f"transformed gt point cloud has been saved to: {output_gt_pcd}")
+else:
+    print(f"gt point cloud file does not exist: {input_gt_pcd}")
 
-    with open(os.path.join(args.dataset_dir, "poses.txt"), "r") as f:
+# save the transformed all_points.ply
+input_all_pts = os.path.join(args.dataset_dir, "all_points.ply")
+if os.path.exists(input_all_pts):
+    pcd = o3d.io.read_point_cloud(input_all_pts)
+    pcd.translate(-obb.center)
+    pcd.rotate(R, center=(0, 0, 0))
+    o3d.io.write_point_cloud(output_all_pts, pcd)
+    print(f"transformed all_points.ply has been saved to: {output_all_pts}")
+else:
+    print(f"all_points.ply file does not exist: {input_all_pts}")
+
+# process the corresponding traj.txt file
+camera_poses = []
+if os.path.exists(os.path.join(args.dataset_dir, "traj.txt")):
+    print(f"processing traj.txt file: {os.path.join(args.dataset_dir, 'traj.txt')}")
+
+    with open(os.path.join(args.dataset_dir, "traj.txt"), "r") as f:
         lines = f.readlines()
 
     for line in lines:
@@ -144,8 +175,8 @@ obb_axis.rotate(R.T, center=(0, 0, 0))
 obb_axis.translate(translation=obb.center)
 
 traj_lines = o3d.geometry.LineSet()
-if os.path.exists(os.path.join(args.dataset_dir, "poses.txt")):
-    camera_poses_loaded = np.loadtxt(os.path.join(args.dataset_dir, "poses.txt"))
+if os.path.exists(os.path.join(args.dataset_dir, "traj.txt")):
+    camera_poses_loaded = np.loadtxt(os.path.join(args.dataset_dir, "traj.txt"))
     # Reshape each pose from 1D (16,) to 4x4 matrix and extract translation
     camera_positions = camera_poses_loaded.reshape(-1, 4, 4)[:, :3, 3]
     points = o3d.utility.Vector3dVector(camera_positions)

@@ -48,7 +48,10 @@ def compute_sdf_ground_truth(
 
 
 def compute_sdf_ground_truth_from_pcd(
-    points_gt: np.ndarray, query_points: np.ndarray, eps: float
+    points_gt: np.ndarray,
+    query_points: np.ndarray,
+    eps: float,
+    use_gpu: bool = True,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Compute unsigned distance (as SDF) and its normalized gradient at query points
@@ -58,17 +61,19 @@ def compute_sdf_ground_truth_from_pcd(
         points_gt: (M, 3) ground truth surface point cloud
         query_points: (N, 3) array of query points
         eps: float, step size for numerical gradient computation
+        use_gpu: bool, whether to use GPU for nearest neighbor search
 
     Returns:
         sdf: (N,) unsigned distance to nearest point on the surface
         grad: (N, 3) normalized gradient (invalid positions get zero gradient)
     """
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda" if use_gpu and torch.cuda.is_available() else "cpu")
+
     pts_gt = torch.from_numpy(points_gt.astype(np.float32)).to(device)
     q = torch.from_numpy(query_points.astype(np.float32)).to(device)
 
     tqdm.write("Computing ground truth SDF from point cloud (nearest-neighbor distance)")
-    sdf_t, _ = nearest_neighbor(q, pts_gt)
+    sdf_t, _ = nearest_neighbor(q, pts_gt, use_gpu=use_gpu)
     sdf = sdf_t.cpu().numpy().astype(np.float64)
 
     tqdm.write("Computing ground truth SDF gradient")
@@ -77,8 +82,8 @@ def compute_sdf_ground_truth_from_pcd(
     for i in tqdm(range(3), desc="Gradient dim", ncols=80):
         offset = torch.zeros((1, 3), dtype=torch.float32, device=device)
         offset[0, i] = eps
-        sdf_plus = nearest_neighbor(q + offset, pts_gt)[0]
-        sdf_minus = nearest_neighbor(q - offset, pts_gt)[0]
+        sdf_plus = nearest_neighbor(q + offset, pts_gt, use_gpu=use_gpu)[0]
+        sdf_minus = nearest_neighbor(q - offset, pts_gt, use_gpu=use_gpu)[0]
         grad[i] = (sdf_plus - sdf_minus) / (2 * eps)
 
     grad_norm = torch.linalg.norm(grad, dim=0, keepdim=True)
@@ -113,8 +118,13 @@ def main():
         "--near-surface-sdf-range",
         type=float,
         nargs=2,
-        default=(-0.5, 1),
+        default=(-0.1, 0.2),
         help="SDF range to consider as near surface",
+    )
+    parser.add_argument(
+        "--nn-on-gpu",
+        action="store_true",
+        help="Whether to use GPU for nearest neighbor search when computing SDF from point cloud",
     )
     parser.add_argument("--output-dir", type=str, required=True, help="Output directory")
 
@@ -136,22 +146,26 @@ def main():
     near_surface_sdf_range: list[float] = args.near_surface_sdf_range
     output_dir: str = args.output_dir
 
+    assert near_surface_sdf_range[1] > near_surface_sdf_range[0], "Invalid near surface SDF range"
+    assert near_surface_sdf_range[1] > 0, "Right bound of near surface SDF range should be positive"
+    padding = abs(near_surface_sdf_range[0]) * 2
+    # TODO: crop the ground truth points/mesh with the bounds
     if use_pcd:
         pcd = o3d.io.read_point_cloud(pcd_path)
         points_gt = np.asarray(pcd.points).astype(np.float64)
         if bound_min is None or bound_max is None:
             bmin = np.asarray(pcd.get_min_bound())
             bmax = np.asarray(pcd.get_max_bound())
-            bound_min = bmin - near_surface_sdf_range[0] * 2 if bound_min is None else np.asarray(bound_min)
-            bound_max = bmax + near_surface_sdf_range[1] * 2 if bound_max is None else np.asarray(bound_max)
+            bound_min = bmin - padding if bound_min is None else np.asarray(bound_min)
+            bound_max = bmax + padding if bound_max is None else np.asarray(bound_max)
     else:
         mesh = o3d.io.read_triangle_mesh(mesh_path)
         points_gt = None
         if bound_min is None or bound_max is None:
             bmin = np.asarray(mesh.get_min_bound())
             bmax = np.asarray(mesh.get_max_bound())
-            bound_min = bmin - near_surface_sdf_range[0] * 2 if bound_min is None else np.asarray(bound_min)
-            bound_max = bmax + near_surface_sdf_range[1] * 2 if bound_max is None else np.asarray(bound_max)
+            bound_min = bmin - padding if bound_min is None else np.asarray(bound_min)
+            bound_max = bmax + padding if bound_max is None else np.asarray(bound_max)
 
     if offset is None:
         offset = np.zeros((3,))
@@ -170,12 +184,10 @@ def main():
 
     if use_pcd:
         gt_sdf_values, gt_sdf_grad = compute_sdf_ground_truth_from_pcd(
-            points_gt, grid_points.reshape(-1, 3), eps
+            points_gt, grid_points.reshape(-1, 3), eps, use_gpu=args.nn_on_gpu
         )
     else:
-        gt_sdf_values, gt_sdf_grad = compute_sdf_ground_truth(
-            mesh, grid_points.reshape(-1, 3), eps
-        )
+        gt_sdf_values, gt_sdf_grad = compute_sdf_ground_truth(mesh, grid_points.reshape(-1, 3), eps)
     gt_sdf_values = gt_sdf_values.reshape(x_size, y_size, z_size)
     gt_sdf_grad = gt_sdf_grad.reshape(x_size, y_size, z_size, 3)
 

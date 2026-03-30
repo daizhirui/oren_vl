@@ -61,7 +61,7 @@ class DataLoader(Dataset):
             return np.eye(4)
 
     def load_gt_pose(self):
-        gt_file = osp.join(self.data_path, "poses.txt")
+        gt_file = osp.join(self.data_path, "traj.txt")
         gt_pose = np.loadtxt(gt_file)  # (n_imgs,16)
         gt_pose = torch.from_numpy(gt_pose).float()
         return gt_pose

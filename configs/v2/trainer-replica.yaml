@@ -36,6 +36,7 @@ model:
         residual_feature_dim: 3
         residual_num_levels: 1
         gradient_augmentation: true
+        independent_smallest_leaf_vertex: false
     residual_net_cfg:
         identifier: grad_sdf.residual_net.ResidualNetConfig
         bound_min: [-10, -10, -10] # will be overwritten by the dataset args

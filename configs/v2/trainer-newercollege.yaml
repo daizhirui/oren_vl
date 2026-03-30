@@ -5,7 +5,7 @@ exp_name: IROS-Newercollege
 device: cuda
 data:
     identifier: grad_sdf.dataset.data_config.DataConfig
-    dataset_name: newercollege
+    dataset_name: newer_college
     dataset_args:
         data_path: "data/newercollege-iros"
         min_depth: 0.8
@@ -36,6 +36,7 @@ model:
         residual_feature_dim: 3
         residual_num_levels: 1
         gradient_augmentation: true
+        independent_smallest_leaf_vertex: true
     residual_net_cfg:
         identifier: grad_sdf.residual_net.ResidualNetConfig
         bound_min: [-10, -10, -10] # will be overwritten by the dataset args
