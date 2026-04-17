@@ -15,3 +15,6 @@ class OctreeConfig(ConfigABC):
     # implementation is efficient enough.
     skip_insertion_if_exists: bool = True
     gradient_augmentation: bool = True
+    residual_feature_dim: int = 4
+    residual_num_levels: int = 3
+    independent_smallest_leaf_vertex: bool = False
