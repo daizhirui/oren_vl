@@ -83,13 +83,6 @@ $\nabla$-SDF is a hybrid SDF reconstruction framework that combines gradient-aug
     ```bash
     pip install --no-build-isolation git+https://github.com/facebookresearch/pytorch3d.git@stable
 
-    cd deps/tinycudann
-    cmake . -B build -DCMAKE_BUILD_TYPE=Release
-    cmake --build build --config Release -j`nproc`
-    cd bindings/torch
-    python setup.py install
-    cd ../../../..
-
     cd deps/sparse_octree
     python setup.py install
     cd ../..
