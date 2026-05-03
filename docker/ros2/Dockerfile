@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=erl/grad_sdf:24.04
+ARG BASE_IMAGE=erl/oren:24.04
 FROM ${BASE_IMAGE}
 
 ARG TZ=America/Los_Angeles

@@ -2,7 +2,7 @@ erl_geometry
 ============
 
 A C++/CUDA library of various algorithms, datasets and utilities for studying geometry.
-This folder only contains the functionalities required by grad-SDF. For the full library, please
+This folder only contains the functionalities required by OREN. For the full library, please
 visit [erl_geometry](https://github.com/ExistentialRobotics/erl_geometry).
 
 This lite version contains:
@@ -40,13 +40,15 @@ sudo apt install \
     pybind11-dev \
     pipenv
 
-# cd to grad-sdf root folder
-# activate grad-sdf's pipenv environment
+# cd to oren root folder
+# activate oren's pipenv environment
 pipenv shell
 # cd to this folder
 
 # install as a python package
 pip install --no-build-isolation --verbose .
+# for Arch Linux, you may need to run the following command instead to use gcc-14 and g++-14
+CC=gcc-14 CXX=g++-14 NVCC_PREPEND_FLAGS='-ccbin g++-14' pip install --no-build-isolation --verbose .
 
 # OR build without python bindings
 mkdir build && cd build
@@ -56,7 +58,7 @@ cmake .. -DCMAKE_BUILD_TYPE=Release \
 
 ## Usage
 
-grad_sdf contains code that uses the semi-sparse octree, marching cubes, etc. in various places.
+oren contains code that uses the semi-sparse octree, marching cubes, etc. in various places.
 For example:
-- [octree, morton code and find voxel indices](../../grad_sdf/semi_sparse_octree_v2.py)
-- [marching cubes](../../grad_sdf/evaluator_base.py)
+- [octree, morton code and find voxel indices](../../oren/oren/semi_sparse_octree_v2.py)
+- [marching cubes](../../oren/oren/evaluator_base.py)

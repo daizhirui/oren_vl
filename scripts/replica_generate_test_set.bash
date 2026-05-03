@@ -8,7 +8,7 @@ DATA_DIR=${DATA_DIR:-${SCRIPT_DIR}/../data/Replica_preprocessed}
 for scene in office0 office1 office2 office3 office4 room0 room1 room2; do
     echo "Generating test set for scene: ${scene}"
 
-    PYTHONPATH="${SCRIPT_DIR}/.." python3 "${SCRIPT_DIR}/../grad_sdf/dataset/generate_test_set.py" \
+    PYTHONPATH="${SCRIPT_DIR}/.." python3 "${SCRIPT_DIR}/../oren/dataset/generate_test_set.py" \
         --mesh-path "${DATA_DIR}/${scene}_mesh.ply" \
         --grid-resolution 0.0125 \
         --eps 0.01 \

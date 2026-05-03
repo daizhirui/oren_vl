@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-grad-SDF Mapping Node for ROS 2 (Simulation)
+oren Mapping Node for ROS 2 (Simulation)
 This node subscribes to point cloud and odometry topics and performs online SDF mapping
 """
 
@@ -22,13 +22,13 @@ from rclpy.qos import (
 from scipy.spatial.transform import Rotation as R
 from sensor_msgs.msg import PointCloud2
 
-# Add grad-sdf to path
-grad_sdf_path = str(Path(__file__).resolve().parents[4])
-sys.path.insert(0, grad_sdf_path)
+# Add oren to path
+oren_path = str(Path(__file__).resolve().parents[4])
+sys.path.insert(0, oren_path)
 
-from grad_sdf.frame import LiDARFrame
-from grad_sdf.trainer_config import TrainerConfig
-from grad_sdf.trainer_ros import TrainerRos
+from oren.frame import LiDARFrame
+from oren.trainer_config import TrainerConfig
+from oren.trainer_ros import TrainerRos
 
 
 class GradSDFSimMappingNode(Node):
@@ -38,7 +38,7 @@ class GradSDFSimMappingNode(Node):
     """
 
     def __init__(self):
-        super().__init__("grad_sdf_sim_mapping_node")
+        super().__init__("oren_sim_mapping_node")
 
         # Parameters (topics + timeouts)
         self.declare_parameter("pointcloud_topic", "/a200_0000/sensors/lidar3d_0/points")
@@ -66,7 +66,7 @@ class GradSDFSimMappingNode(Node):
         self.device = self.cfg.device
 
         # Initialize trainer
-        self.get_logger().info("Initializing grad-SDF model...")
+        self.get_logger().info("Initializing oren model...")
         self.trainer = Trainer(self.cfg)
 
         # Load poses if needed for logging (not used in sim)

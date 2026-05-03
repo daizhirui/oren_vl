@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from grad_sdf.utils.config_abc import ConfigABC
+from oren.utils.config_abc import ConfigABC
 
 
 @dataclass

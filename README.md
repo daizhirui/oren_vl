@@ -22,8 +22,8 @@ OREN is a hybrid SDF reconstruction framework that combines gradient-augmented o
 
 1. Clone the repository
   ```bash
-    git clone --recursive https://github.com/ExistentialRobotics/grad-sdf.git
-    cd grad-sdf
+    git clone --recursive https://github.com/ExistentialRobotics/oren.git
+    cd oren
   ```
 2. Setup pipenv environment
   ```bash
@@ -63,7 +63,9 @@ OREN is a hybrid SDF reconstruction framework that combines gradient-augmented o
     ```
 4. Install other dependencies
   ```bash
-    pip install --no-build-isolation git+https://github.com/facebookresearch/pytorch3d.git@stable
+    cd deps/pytorch3d
+    pip install --no-build-isolation --verbose .
+    cd ../..
 
     cd deps/sparse_octree
     python setup.py install
@@ -72,8 +74,10 @@ OREN is a hybrid SDF reconstruction framework that combines gradient-augmented o
     cd deps/erl_geometry
     pip install --no-build-isolation --verbose .
     cd ../..
-    # for Arch Linux
-    # CXX=/usr/bin/g++-14 pip install --no-build-isolation --verbose .
+
+    # for Arch Linux, when installing pytorch3d and erl_geometry,
+    # you may need to set CC, CXX and NVCC_PREPEND_FLAGS to use gcc-14/g++-14
+    # CC=gcc-14 CXX=g++-14 NVCC_PREPEND_FLAGS='-ccbin g++-14' pip install --no-build-isolation --verbose .
   ```
 
 ## Prepare Dataset
@@ -82,10 +86,10 @@ Download Replica Dataset (only mesh, camera parameter and trajectory) at [One-Dr
 
 Run the following commands to preprocess the Replica dataset:
 
-The script `[grad_sdf/dataset/replica_obb_rotation.py](grad_sdf/dataset/replica_obb_rotation.py)` is used to rotate mesh and trajectory to better match octree.
+The script `[oren/oren/dataset/replica_obb_rotation.py](oren/oren/dataset/replica_obb_rotation.py)` is used to rotate mesh and trajectory to better match octree.
 
 ```bash
-python grad_sdf/dataset/replica_obb_rotation.py \
+python oren/oren/dataset/replica_obb_rotation.py \
     --dataset-dir data/Replica \
     --output-dir data/Replica_preprocessed
 ```
@@ -96,10 +100,10 @@ copy camera parameter to preprocessed data folder
 cp data/Replica/cam_params.json data/Replica_preprocessed
 ```
 
-The script `[grad_sdf/dataset/replica_augment_views.py](grad_sdf/dataset/replica_augment_views.py)` is used to augment the Replica dataset with additional virtual camera views (e.g., upward-looking frames) to improve spatial coverage for training.
+The script `[oren/oren/dataset/replica_augment_views.py](oren/oren/dataset/replica_augment_views.py)` is used to augment the Replica dataset with additional virtual camera views (e.g., upward-looking frames) to improve spatial coverage for training.
 
 ```bash
-python grad_sdf/dataset/replica_augment_views.py \
+python oren/oren/dataset/replica_augment_views.py \
     --original-dir data/Replica_preprocessed \
     --output-dir data/Replica_preprocessed \
     # --scenes room0  # (optional) Process specific scenes only. If not set, process all scenes. \
@@ -110,14 +114,14 @@ python grad_sdf/dataset/replica_augment_views.py \
 
 Download our preprocessed Replica dataset
 
-## Run $\nabla$-SDF
+## Run OREN
 
 ### Example: Training on Replica
 
 Run the following command to start training on the Replica dataset
 
 ```bash
-python grad_sdf/trainer.py  --config configs/v2/replica/room0.yaml
+python oren/oren/trainer.py  --config configs/v2/replica/room0.yaml
 ```
 
 ### Run GUI Trainer
@@ -125,7 +129,7 @@ python grad_sdf/trainer.py  --config configs/v2/replica/room0.yaml
 The GUI trainer allows interactive visualization and monitoring of the training process, including SDF slice, octree structure, and camera poses.
 
 ```bash
-python grad_sdf/gui_trainer.py \
+python oren/oren/gui_trainer.py \
     --gui-config configs/v2/gui.yaml \
     --trainer-config configs/v2/replica/room0.yaml \
     --gt-mesh-path data/Replica_preprocessed/mesh.ply \
@@ -133,54 +137,29 @@ python grad_sdf/gui_trainer.py \
     --copy-scene-bound-to-gui
 ```
 
-<!-- Download our preprocessed newercollege lidar dataset (get from newercollege rosbag)
-
-## Run $\nabla$-SDF
-
-### Example: Training on Newercollege
-
-Run the following command to start training on the Newercollege dataset
-
-```bash
-python grad_sdf/trainer.py  --config configs/v2/newercollege.yaml
-```
-
-### Run GUI Trainer
-
-The GUI trainer allows interactive visualization and monitoring of the training process, including SDF slice, octree structure, and camera poses.
-
-```bash
-python grad_sdf/gui_trainer.py \
-    --gui-config configs/v2/gui.yaml \
-    --trainer-config configs/v2/newercollege.yaml \
-    --gt-mesh-path data/newercollege-lidar-rotated/gt-mesh.ply \
-    --apply-offset-to-gt-mesh \
-    --copy-scene-bound-to-gui
-``` -->
-
 ## ROS 2 (this branch)
 
 ### Build and install
 
 ```bash
 # from repo root
-colcon build --packages-select grad_sdf
+colcon build --verbose --symlink-install
 source install/setup.bash
 ```
 
 ### Launch mapping node with rosbag
 
 ```bash
-ros2 launch grad_sdf mapping_with_bag.launch.py \
-  config_path:=/home/qihao/workplace/grad-sdf/configs/v2/quad-ros.yaml
+ros2 launch oren_ros mapping_with_bag.launch.py \
+  config_path:=<repo_root>/configs/v2/quad-ros.yaml
 ```
 
 Optional arguments:
 
 ```bash
-ros2 launch grad_sdf mapping_with_bag.launch.py \
-  bag_path:=/home/qihao/workplace/grad-sdf/data/newercollege-ros2 \
-  config_path:=/home/qihao/workplace/grad-sdf/configs/v2/trainer.yaml \
+ros2 launch oren_ros mapping_with_bag.launch.py \
+  bag_path:=<newer_college_bag_path> \
+  config_path:=<repo_root>/configs/v2/trainer.yaml \
   play_rate:=1.0 \
   bag_delay:=1.0
 ```
@@ -197,7 +176,7 @@ Use the following command to start a container with GPU, X11 display, and device
 ./docker/build.bash
 ```
 
-This script will create the Docker image `erl/grad_sdf:24.04`.
+This script will create the Docker image `erl/oren:24.04`.
 
 ### 2. Run the container
 
@@ -208,16 +187,15 @@ docker run --privileged --restart always -t \
     -v /tmp/.X11-unix:/tmp/.X11-unix \
     -v $HOME:$HOME:rw \
     -v $HOME/.Xauthority:/root/.Xauthority:rw \
-    --workdir /workspace \
     --gpus all \
     --runtime=nvidia \
     -e DISPLAY \
     --net=host \
     --detach \
-    --hostname container-grad_sdf \
-    --add-host=container-grad_sdf:127.0.0.1 \
-    --name grad_sdf \
-    erl/grad_sdf:24.04 \
+    --hostname container-oren \
+    --add-host=container-oren:127.0.0.1 \
+    --name oren \
+    erl/oren:24.04 \
     bash -l
 ```
 
@@ -226,10 +204,10 @@ docker run --privileged --restart always -t \
 If you find this work useful in your research, please consider citing:
 
 ```bibtex
-@misc{dai2025nablasdf,
-      title={{$\nabla$-SDF: Learning Euclidean Signed Distance Functions Online with Gradient-Augmented Octree Interpolation and Neural Residual}},
+@misc{dai2026oren,
+      title={OREN: Octree Residual Network for Real-Time Euclidean Signed Distance Mapping},
       author={Zhirui Dai and Qihao Qian and Tianxing Fan and Nikolay Atanasov},
-      year={2025},
+      year={2026},
       eprint={2510.18999},
       archivePrefix={arXiv},
       primaryClass={cs.RO},

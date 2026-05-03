@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-grad-SDF Mapping Node for ROS 2
+oren Mapping Node for ROS 2
 This node subscribes to point cloud and pose topics and performs online SDF mapping
 """
 
@@ -27,22 +27,22 @@ from scipy.spatial.transform import Rotation as R
 from sensor_msgs.msg import Image
 from std_msgs.msg import Header
 
-# Add grad-sdf to path
-grad_sdf_path = str(Path(__file__).resolve().parents[2])
-sys.path.insert(0, grad_sdf_path)
+# Add oren to path
+oren_path = str(Path(__file__).resolve().parents[2])
+sys.path.insert(0, oren_path)
 
-from grad_sdf.frame import DepthFrame
-from grad_sdf.trainer_config import TrainerConfig
-from grad_sdf.trainer_ros import TrainerRos
+from oren.frame import DepthFrame
+from oren.trainer_config import TrainerConfig
+from oren.trainer_ros import TrainerRos
 
 
 class GradSDFMappingNode(Node):
     """
-    ROS 2 Node for online SDF mapping using grad-SDF algorithm
+    ROS 2 Node for online SDF mapping using oren algorithm
     """
 
     def __init__(self):
-        super().__init__("grad_sdf_mapping_node")
+        super().__init__("oren_mapping_node")
 
         self.depth_topic = "/quad/depth_img"
         self.pose_topic = "/quad/depth_img_pose"
@@ -74,7 +74,7 @@ class GradSDFMappingNode(Node):
         self.bound_max = torch.tensor(cfg.data.dataset_args["bound_max"])
 
         # Initialize trainer
-        self.get_logger().info("Initializing grad-SDF model...")
+        self.get_logger().info("Initializing oren model...")
         self.trainer = TrainerRos(self.cfg)
 
         # Subscribe to point cloud

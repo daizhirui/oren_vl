@@ -7,7 +7,7 @@ DATA_DIR=${DATA_DIR:-${SCRIPT_DIR}/../data/NewerCollege_preprocessed}
 OUTPUT_DIR=${OUTPUT_DIR:-${SCRIPT_DIR}/../data/NewerCollege_preprocessed/test_set}
 GRID_RESOLUTION=${GRID_RESOLUTION:-0.1}
 
-PYTHONPATH="${SCRIPT_DIR}/.." python3 "${SCRIPT_DIR}/../grad_sdf/dataset/generate_test_set.py" \
+PYTHONPATH="${SCRIPT_DIR}/.." python3 "${SCRIPT_DIR}/../oren/dataset/generate_test_set.py" \
     --pcd-path "${DATA_DIR}/all_points.ply" \
     --grid-resolution ${GRID_RESOLUTION} \
     --eps 0.03 \

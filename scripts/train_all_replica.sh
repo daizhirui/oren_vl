@@ -27,7 +27,7 @@ for cfg in "${SCENES[@]}"; do
   echo "==========================================="
   echo "Training with config: ${CONFIG_DIR}/${cfg}"
   echo "==========================================="
-  PYTHONPATH="${PYTHONPATH}" python grad_sdf/trainer.py \
+  PYTHONPATH="${PYTHONPATH}" python oren/trainer.py \
     --config "${CONFIG_DIR}/${cfg}"
 done
 

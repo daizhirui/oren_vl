@@ -6,16 +6,16 @@ import matplotlib.pyplot as plt
 import numpy as np
 from tqdm import tqdm
 
-from grad_sdf import torch
-from grad_sdf.criterion import Criterion
-from grad_sdf.evaluator_grad_sdf import GradSdfEvaluator
-from grad_sdf.frame import Frame
-from grad_sdf.key_frame_set import KeyFrameSet
-from grad_sdf.loggers import BasicLogger
-from grad_sdf.model import SdfNetwork
-from grad_sdf.trainer_config import TrainerConfig
-from grad_sdf.utils.profiling import GpuTimer
-from grad_sdf.utils.sampling import SampleResults, generate_sdf_samples
+from oren import torch
+from oren.criterion import Criterion
+from oren.evaluator_oren import GradSdfEvaluator
+from oren.frame import Frame
+from oren.key_frame_set import KeyFrameSet
+from oren.loggers import BasicLogger
+from oren.model import SdfNetwork
+from oren.trainer_config import TrainerConfig
+from oren.utils.profiling import GpuTimer
+from oren.utils.sampling import SampleResults, generate_sdf_samples
 
 
 class TrainerRos:

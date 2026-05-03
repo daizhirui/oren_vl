@@ -1,4 +1,4 @@
-identifier: grad_sdf.gui_base.GuiBaseConfig
+identifier: oren.gui_base.GuiBaseConfig
 
 scene_width: 1920
 scene_height: 1440
@@ -47,7 +47,7 @@ sdf_slice_axis: 2
 sdf_slice_position: -1.0
 sdf_color_map: jet
 
-experiment_name: grad_sdf
+experiment_name: oren
 scene_bound_min: [-80.0, -80.0, -80.0]
 scene_bound_max: [80.0, 80.0, 80.0]
 gt_mesh_path:

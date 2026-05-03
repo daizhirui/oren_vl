@@ -66,7 +66,7 @@ import open3d as o3d
 import yaml
 from scipy.spatial import cKDTree
 
-from grad_sdf.utils.config_abc import ConfigABC
+from oren.utils.config_abc import ConfigABC
 
 
 @dataclass

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-grad-SDF Mapping Node for ROS 2
+oren Mapping Node for ROS 2
 This node subscribes to point cloud and pose topics and performs online SDF mapping
 """
 
@@ -26,22 +26,22 @@ from scipy.spatial.transform import Rotation as R
 from sensor_msgs.msg import PointCloud2
 from std_msgs.msg import Header
 
-# Add grad-sdf to path
-grad_sdf_path = str(Path(__file__).resolve().parents[4])
-sys.path.insert(0, grad_sdf_path)
+# Add oren to path
+oren_path = str(Path(__file__).resolve().parents[4])
+sys.path.insert(0, oren_path)
 
-from grad_sdf.frame import LiDARFrame
-from grad_sdf.trainer import Trainer
-from grad_sdf.trainer_config import TrainerConfig
+from oren.frame import LiDARFrame
+from oren.trainer import Trainer
+from oren.trainer_config import TrainerConfig
 
 
 class GradSDFMappingNode(Node):
     """
-    ROS 2 Node for online SDF mapping using grad-SDF algorithm
+    ROS 2 Node for online SDF mapping using oren algorithm
     """
 
     def __init__(self):
-        super().__init__("grad_sdf_mapping_node")
+        super().__init__("oren_mapping_node")
 
         self.pointcloud_topic = "/os_cloud_node/points"
 
@@ -58,7 +58,7 @@ class GradSDFMappingNode(Node):
         self.device = self.cfg.device
 
         # Initialize trainer
-        self.get_logger().info("Initializing grad-SDF model...")
+        self.get_logger().info("Initializing oren model...")
         self.trainer = Trainer(self.cfg)
 
         # Load poses
