@@ -33,6 +33,8 @@ class TrainerConfig(ConfigABC):
     grad_method: str = "finite_difference"  # autodiff | finite_difference
     finite_difference_eps: float = 0.03
     final_iterations: int = 0  # number of iterations after all frames are processed, 0 means no extra iterations
+    final_evaluate: bool = True  # whether to call evaluate() in the cleanup finally
+    final_save_model: bool = True  # whether to write final.pth in the cleanup finally
     save_mesh: bool = True  # whether to save the final mesh
     mesh_resolution: float = 0.0125
     mesh_iso_value: float = 0.0

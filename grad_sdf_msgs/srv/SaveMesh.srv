@@ -1,0 +1,5 @@
+string path
+bool prior  # if true, save the prior-only mesh (sdf_prior); else the residual-corrected mesh
+---
+bool success
+string message

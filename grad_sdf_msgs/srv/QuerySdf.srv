@@ -1,0 +1,4 @@
+geometry_msgs/Point[] points
+---
+float32[] sdf
+geometry_msgs/Vector3[] grad

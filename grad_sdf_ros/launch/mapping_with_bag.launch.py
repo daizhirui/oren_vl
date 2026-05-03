@@ -1,22 +1,27 @@
+"""Launch grad_sdf_ros mapping_node alongside `ros2 bag play`.
+
+ROS-side parameters (topics, modality, sync) are passed via launch args
+`--ros-args -p name:=value` after the launch line, or by editing the
+`parameters=[...]` list below.
+"""
 from pathlib import Path
 
 from ament_index_python.packages import get_package_share_directory
-from launch_ros.actions import Node
-
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, ExecuteProcess, LogInfo, TimerAction
 from launch.substitutions import LaunchConfiguration
+from launch_ros.actions import Node
 
 
 def generate_launch_description():
-    share_root = Path(get_package_share_directory("grad_sdf"))
-    default_config_path = share_root / "configs" / "v2" / "trainer.yaml"
+    share_root = Path(get_package_share_directory("grad_sdf_ros"))
+    default_config_path = Path.cwd() / "configs" / "v2" / "trainer-ros.yaml"
     if not default_config_path.exists():
-        default_config_path = Path.cwd() / "configs" / "v2" / "trainer.yaml"
+        default_config_path = share_root / "configs" / "v2" / "trainer-ros.yaml"
 
-    default_bag_path = share_root / "data" / "newercollege-ros2"
+    default_bag_path = Path.cwd() / "data" / "newercollege-ros2"
     if not default_bag_path.exists():
-        default_bag_path = Path.cwd() / "data" / "newercollege-ros2"
+        default_bag_path = share_root / "data" / "newercollege-ros2"
 
     bag_path_arg = DeclareLaunchArgument(
         "bag_path",
@@ -45,7 +50,7 @@ def generate_launch_description():
     bag_delay = LaunchConfiguration("bag_delay")
 
     mapping_node = Node(
-        package="grad_sdf",
+        package="grad_sdf_ros",
         executable="mapping_node",
         name="grad_sdf_mapping_node",
         output="screen",
@@ -65,7 +70,7 @@ def generate_launch_description():
             bag_delay_arg,
             LogInfo(
                 msg=[
-                    "Starting grad_sdf mapping node with config: ",
+                    "Starting grad_sdf_ros mapping_node with config: ",
                     config_path,
                     " | bag: ",
                     bag_path,

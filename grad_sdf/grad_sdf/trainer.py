@@ -20,21 +20,28 @@ from grad_sdf.utils.sampling import SampleResults, generate_sdf_samples
 
 
 class Trainer:
-    def __init__(self, cfg: TrainerConfig):
+    def __init__(self, cfg: TrainerConfig, data_stream=None):
         self.cfg = cfg
 
         self.setup_seed(self.cfg.seed)
 
-        self.data_stream = get_dataset(cfg.data.dataset_name, cfg.data.dataset_args)
+        if data_stream is None:
+            self.data_stream = get_dataset(cfg.data.dataset_name, cfg.data.dataset_args)
+        else:
+            self.data_stream = data_stream
+
+        # streaming sources signal an unbounded length with len() < 0
+        self.streaming = len(self.data_stream) < 0
 
         # set the bound automatically
         self.cfg.bound_min = (self.data_stream.bound_min - 0.1).cpu().tolist()
         self.cfg.bound_max = (self.data_stream.bound_max + 0.1).cpu().tolist()
 
-        if self.cfg.data.end_frame < 0:
-            self.cfg.data.end_frame = len(self.data_stream)
-        self.cfg.data.start_frame = min(self.cfg.data.start_frame, len(self.data_stream) - 1)
-        self.cfg.data.end_frame = min(self.cfg.data.end_frame, len(self.data_stream))
+        if not self.streaming:
+            if self.cfg.data.end_frame < 0:
+                self.cfg.data.end_frame = len(self.data_stream)
+            self.cfg.data.start_frame = min(self.cfg.data.start_frame, len(self.data_stream) - 1)
+            self.cfg.data.end_frame = min(self.cfg.data.end_frame, len(self.data_stream))
         self.current_frame_idx = self.cfg.data.start_frame
 
         self.key_frame_set = KeyFrameSet(
@@ -99,6 +106,52 @@ class Trainer:
         random.seed(seed)
 
     def train(self):
+        try:
+            if self.streaming:
+                self._train_streaming()
+            else:
+                self._train_bounded()
+        finally:
+            for _ in range(self.cfg.final_iterations):
+                self.train_with_frame(None)
+
+            self.logger.info("Training completed.")
+            if self.training_end_callback is not None:
+                self.training_end_callback(self)
+
+            if self.cfg.final_evaluate:
+                self.evaluate()
+            if self.cfg.final_save_model:
+                self.save_model("final.pth")
+
+    def _train_streaming(self) -> None:
+        pbar = tqdm(desc="Mapping (streaming)", ncols=120, leave=False)
+        try:
+            # init frame_id for streaming source, which is only used for logging and checkpoint naming.
+            # self.current_frame_idx is the fetching counter for streaming source, which is increased
+            # whenever we fetch a frame (even if it's None or has bad pose).
+            frame_id = self.current_frame_idx
+            while True:
+                frame = self.fetch_one_frame()
+                if frame is None:
+                    # `None` from a streaming source means either shutdown or transient idle;
+                    # the loader exposes which via `is_shutdown` (default True for sources without it,
+                    # so non-ROS streaming sources keep non-streaming behavior).
+                    if getattr(self.data_stream, "is_shutdown", True):
+                        self.logger.info("No more frames (data stream closed), finish mapping.")
+                        return
+                    # Transient idle: keep optimizing on existing keyframes.
+                    if not self.train_with_frame(None):
+                        return
+                    continue
+                if not self._step_one_frame(frame, frame_id):
+                    return
+                frame_id += 1  # increase frame_id when frame is not None and processed successfully
+                pbar.update(1)
+        finally:
+            pbar.close()
+
+    def _train_bounded(self) -> None:
         for frame_id in tqdm(
             range(self.cfg.data.start_frame, self.cfg.data.end_frame),
             desc="Mapping",
@@ -108,47 +161,52 @@ class Trainer:
             frame = self.fetch_one_frame()
             if frame is None:
                 self.logger.info("No more valid frames, finish mapping.")
-                break  # no more valid frames
+                return
+            if not self._step_one_frame(frame, frame_id):
+                return
 
-            points = frame.get_points(to_world_frame=True, device=self.cfg.device)
+    def _step_one_frame(self, frame: Frame, frame_id: int) -> bool:
+        """Run insertion + key-frame update + training for one frame. Returns False if interrupted by callback."""
+        points = frame.get_points(to_world_frame=True, device=self.cfg.device)
 
-            with self.timer_octree_insert:
-                _, seen_voxels = self.insert_points_to_octree(points)
+        with self.timer_octree_insert:
+            _, seen_voxels = self.insert_points_to_octree(points)
 
-            with self.timer_key_frame_set_update:
-                is_key_frame = self.update_key_frame_set(frame, seen_voxels)
+        with self.timer_key_frame_set_update:
+            is_key_frame = self.update_key_frame_set(frame, seen_voxels)
 
-            if is_key_frame:
-                self.logger.info(f"Frame {frame_id} is selected as a key frame.")
+        if is_key_frame:
+            self.logger.info(f"Frame {frame_id} is selected as a key frame.")
 
-            with self.timer_train_frame:
-                if not self.train_with_frame(frame=frame):
-                    self.logger.info("Training interrupted by callback, exiting.")
-                    break  # exit training
-            self.epoch += 1
+        with self.timer_train_frame:
+            if not self.train_with_frame(frame=frame):
+                return False
+        self.epoch += 1
 
-            if self.cfg.ckpt_interval > 0 and self.epoch % self.cfg.ckpt_interval == 0:
-                self.save_model(f"epoch_{self.epoch:04d}.pth")
-
-        for _ in range(self.cfg.final_iterations):
-            self.train_with_frame(None)
-
-        self.logger.info("Training completed.")
-        if self.training_end_callback is not None:
-            self.training_end_callback(self)
-
-        self.evaluate()
-        self.save_model("final.pth")
+        if self.cfg.ckpt_interval > 0 and self.epoch % self.cfg.ckpt_interval == 0:
+            self.save_model(f"epoch_{self.epoch:04d}.pth")
+        return True
 
     def fetch_one_frame(self) -> Optional[Frame]:
         frame = None
-        while self.current_frame_idx < self.cfg.data.end_frame:
-            frame = self.data_stream[self.current_frame_idx]
-            self.current_frame_idx += 1
-            if not torch.all(frame.get_ref_pose().isfinite()):  # bad pose
-                continue
-            break
-        return frame
+        if self.streaming:
+            # Streaming source: index value is unused; loader blocks until a frame
+            # is ready and returns None on shutdown. Skip frames with bad poses.
+            while True:
+                frame = self.data_stream[self.current_frame_idx]
+                self.current_frame_idx += 1  # fetching counter for streaming source
+                if frame is None:
+                    return None
+                if torch.all(frame.get_ref_pose().isfinite()):
+                    return frame
+        else:
+            while self.current_frame_idx < self.cfg.data.end_frame:
+                frame = self.data_stream[self.current_frame_idx]
+                self.current_frame_idx += 1
+                if not torch.all(frame.get_ref_pose().isfinite()):  # bad pose
+                    continue
+                break
+            return frame
 
     @torch.no_grad()
     def insert_points_to_octree(self, points: torch.Tensor):
@@ -183,6 +241,7 @@ class Trainer:
 
         if self.training_frame_start_callback is not None:
             if not self.training_frame_start_callback(self, frame):
+                self.logger.info("Training interrupted by callback, exiting.")
                 return False  # exit training
 
         with self.timer_select_key_frames:
@@ -383,6 +442,28 @@ class Trainer:
     def save_model(self, path: str):
         self.logger.log_ckpt(self.model.state_dict(), path)
         self.logger.info(f"Model saved to {path}.")
+
+    def save_mesh(self, path: str, prior: bool = False) -> None:
+        field = "sdf_prior" if prior else "sdf"
+        [mesh] = self.evaluator.extract_mesh(
+            bound_min=self.cfg.bound_min,
+            bound_max=self.cfg.bound_max,
+            grid_resolution=self.cfg.mesh_resolution,
+            fields=[field],
+            iso_value=self.cfg.mesh_iso_value,
+        )
+        self.logger.log_mesh(mesh, path)
+        self.logger.info(f"Mesh ({field}) saved to {path}.")
+
+    def query_sdf(self, points: torch.Tensor, return_grad: bool = True) -> dict:
+        """Forward the model on the given points. Returns dict with sdf and (optional) sdf_grad."""
+        return self.evaluator.forward_model(
+            self.model,
+            points.to(self.cfg.device),
+            get_grad=return_grad,
+            auto_grad=True,
+            device=self.cfg.device,
+        )
 
     def get_time_stats(self) -> dict:
         time_stats = {
