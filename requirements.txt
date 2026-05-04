@@ -1,3 +1,4 @@
+# OREN
 torch==2.11.0
 torchvision==0.26.0
 pyyaml==6.0.3
@@ -10,8 +11,12 @@ ruamel.yaml==0.19.1
 scikit-image==0.26.0
 scipy==1.17.1
 tensorboard==2.20.0
+tensorboardX==2.6.5
 tqdm==4.67.3
 transforms3d==0.4.2
 trimesh==4.12.2
 colorama==0.4.6
-nvidia-ml-py
+nvidia-ml-py==13.595.45
+# OREN-VL
+open_clip_torch==3.3.0
+wandb==0.26.1

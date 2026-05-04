@@ -1,0 +1,23 @@
+# Base config for `oren_vl.demo_semi_sparse_octree_vl` on Replica scenes.
+# Leaf configs (e.g. configs_local/replica-<scene>-octree-vl.yaml) inherit
+# this and supply vl_features_dir / output_path for a specific scene.
+
+# 5cm leaves with tree_depth=9 → octree covers ±12.8m per axis at the finest
+# size; semi_sparse_depth=6 keeps the top of the tree dense for fast lookup.
+resolution: 0.05
+tree_depth: 9
+semi_sparse_depth: 6
+
+# Vertex/voxel buffers grow as needed by erl_geometry; this just sets the
+# initial allocation. Set high enough to avoid early reallocations.
+init_voxel_num: 200000
+
+# At 5cm resolution each frame's 256 valid pixels rarely produce >3 hits per
+# voxel, so the OctreeConfig default of 3 silently drops most insertions.
+# Use 0 here; the threshold is per-frame, so accumulation across frames still
+# yields confident leaves.
+insertion_threshold: 0
+
+scatter_mode: running_average  # or "overwrite"
+insertion_stride: 1            # use every Nth frame for the geometry pass
+device: cuda

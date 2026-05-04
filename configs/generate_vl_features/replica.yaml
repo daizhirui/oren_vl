@@ -1,0 +1,31 @@
+# Base VL-feature extraction config for the Replica dataset.
+# Leaf configs (e.g. configs_local/replica-<scene>-vl.yaml) inherit this
+# and supply input_dir / output_dir for a specific scene + machine.
+
+extracter_name: clip
+extracter_kwargs:
+    clip_model_name: EVA02-L-14
+    clip_model_pretrained: merged2b_s4b_b131k
+    device: cuda
+
+# Replica filename layout: results/frame{idx:06d}.jpg, results/depth{idx:06d}.png
+rgb_img_prefix: "results/frame"
+rgb_img_ext: "jpg"
+depth_img_prefix: "results/depth"
+depth_img_ext: "png"
+img_name_format: "{prefix}{idx:06d}.{ext}"
+
+# 4x4 row-major matrices (T_wc), one per line — same format read by oren/dataset/replica.py
+traj_filename: "traj.txt"
+
+# Replica intrinsics (1200x680 RGB). See oren/dataset/replica.py:load_intrinsic.
+intrinsics_fx: 600.0
+intrinsics_fy: 600.0
+intrinsics_cx: 599.5
+intrinsics_cy: 339.5
+
+# Replica depth is uint16 PNG with scale 1 / 6553.5 (oren/dataset/replica.py:77 does `depth / 6553.5`).
+depth_scale: 0.00015259021896696421759365224689097
+
+batch_size: 32
+num_workers: 4
