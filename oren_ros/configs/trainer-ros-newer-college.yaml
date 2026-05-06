@@ -1,0 +1,15 @@
+base_config: trainer-ros.yaml
+
+exp_name: oren_ros_newer_college
+
+data:
+    dataset_args:
+        min_depth: 0.8
+        max_depth: 40.0
+        # Derived from /home/daizhirui/Data/NewerCollege/gt-mesh-small.ply
+        # mesh extent X[-5.04, 55.45] Y[-67.99, -1.81] Z[-1.37, 26.16]; ~2m padding.
+        bound_min: [-7.0, -70.0, -3.0]
+        bound_max: [58.0, 0.0, 28.0]
+
+bound_min: [-7.0, -70.0, -3.0]  # overwritten by data.dataset_args at runtime
+bound_max: [58.0, 0.0, 28.0]    # overwritten by data.dataset_args at runtime

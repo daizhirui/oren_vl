@@ -1,4 +1,7 @@
 """
+This module is deprecated in favor of `semi_sparse_octree_v2.py`, which implements
+a more efficient and flexible octree from erl_geometry.
+
 Semi-sparse voxel octree wrapper using the sparse_octree package.
 sparse_octree package is a modified version of svo from H2-Mapping:
 https://github.com/Robotics-STAR-Lab/H2-Mapping

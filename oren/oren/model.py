@@ -26,12 +26,13 @@ class SdfNetwork(nn.Module):
         )
         self.residual: ResidualNet = ResidualNet(cfg.residual_net_cfg)
 
-    def forward(self, points: torch.Tensor, voxel_indices: torch.Tensor = None):
+    def forward(self, points: torch.Tensor, voxel_indices: torch.Tensor = None, prior_only: bool = False):
         """
         Computes the SDF values for the given points.
         Args:
             points: (..., 3) points in world coordinates
             voxel_indices: (...,) optional voxel indices for the points
+            prior_only: if true, only return the SDF prior from the octree
 
         Returns:
             (..., ) voxel indices for the points
@@ -44,13 +45,13 @@ class SdfNetwork(nn.Module):
         if voxel_indices is not None:
             voxel_indices = voxel_indices.view(-1)
         voxel_indices, sdf_prior, residual_features = self.octree(points, voxel_indices)
-        if residual_features is not None:
+        if prior_only or residual_features is None:
+            sdf_pred = sdf_prior.detach()
+            sdf_residual = None
+        else:
             residual_network_input = torch.cat([sdf_prior.unsqueeze(-1).detach(), residual_features], dim=-1)
             sdf_residual = self.residual(residual_network_input).squeeze(-1)
             sdf_pred = sdf_prior.detach() + sdf_residual
-        else:
-            sdf_pred = sdf_prior.detach()
-            sdf_residual = None
 
         voxel_indices = voxel_indices.view(shape[:-1])
         sdf_prior = sdf_prior.view(shape[:-1])

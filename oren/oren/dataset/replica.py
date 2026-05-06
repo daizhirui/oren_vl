@@ -1,5 +1,6 @@
 import os.path as osp
 from glob import glob
+from typing import Optional
 
 import cv2
 import numpy as np
@@ -17,8 +18,8 @@ class DataLoader(Dataset):
         data_path: str,
         min_depth: float = 0.0,
         max_depth: float = -1.0,
-        bound_min: torch.Tensor = None,
-        bound_max: torch.Tensor = None,
+        bound_min: Optional[torch.Tensor] = None,
+        bound_max: Optional[torch.Tensor] = None,
     ):
         data_path = osp.expanduser(data_path)
         data_path = osp.abspath(data_path)
@@ -38,12 +39,8 @@ class DataLoader(Dataset):
             self.bound_min = np.min(mesh.vertices[:], axis=0).flatten().tolist()
             self.bound_max = np.max(mesh.vertices[:], axis=0).flatten().tolist()
 
-        if self.bound_min is not None:
-            assert self.bound_max is not None
-            self.bound_min = torch.tensor(self.bound_min).float()
-        if self.bound_max is not None:
-            assert self.bound_min is not None
-            self.bound_max = torch.tensor(self.bound_max).float()
+        self.bound_min = torch.tensor(self.bound_min).float()
+        self.bound_max = torch.tensor(self.bound_max).float()
 
         self.num_imgs = len(glob(osp.join(self.data_path, "results/*.jpg")))
         self.K = self.load_intrinsic()
@@ -75,7 +72,7 @@ class DataLoader(Dataset):
     def load_depth(self, index) -> torch.Tensor:
         depth = cv2.imread(osp.join(self.data_path, "results/depth{:06d}.png".format(index)), -1)
         depth = depth / 6553.5
-        if self.min_depth > 0:
+        if self.min_depth >= 0:
             depth[depth < self.min_depth] = 0
         if self.max_depth > 0:
             depth[depth > self.max_depth] = 0

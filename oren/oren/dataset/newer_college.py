@@ -1,5 +1,6 @@
 import os.path as osp
 from glob import glob
+from typing import Optional
 
 import numpy as np
 import open3d as o3d
@@ -16,8 +17,8 @@ class DataLoader(Dataset):
         data_path: str,
         min_depth: float = 0.0,
         max_depth: float = -1.0,
-        bound_min: torch.Tensor = None,
-        bound_max: torch.Tensor = None,
+        bound_min: Optional[torch.Tensor] = None,
+        bound_max: Optional[torch.Tensor] = None,
     ):
         self.data_path = data_path
         self.min_depth = min_depth
@@ -32,12 +33,8 @@ class DataLoader(Dataset):
             self.bound_min = np.min(mesh.vertices[:], axis=0).flatten().tolist()
             self.bound_max = np.max(mesh.vertices[:], axis=0).flatten().tolist()
 
-        if self.bound_min is not None:
-            assert self.bound_max is not None
-            self.bound_min = torch.tensor(self.bound_min).float()
-        if self.bound_max is not None:
-            assert self.bound_min is not None
-            self.bound_max = torch.tensor(self.bound_max).float()
+        self.bound_min = torch.tensor(self.bound_min).float()
+        self.bound_max = torch.tensor(self.bound_max).float()
 
         self.num_pcds = len(glob(osp.join(self.data_path, "ply/*.ply")))
         self.gt_pose = self.load_gt_pose()

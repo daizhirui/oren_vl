@@ -156,6 +156,18 @@ python oren/oren/gui_trainer.py \
 
 ## ROS 2 Mapping Node
 
+<div align="center">
+
+![ROS2 Demo](assets/ros2-newer-college.gif)
+
+</div>
+
+The `oren_ros` package provides three executables:
+
+- `mapping_node` — subscribes to LiDAR / depth + (optional) odometry, runs the trainer online.
+- `sdf_query_node` — samples the learned SDF on a 2D grid and publishes it as a `grid_map_msgs/GridMap` (and optionally `sensor_msgs/PointCloud2`).
+- `clock_node` — replays `/clock` from the bag's TF stamps so `use_sim_time` consumers stay in sync.
+
 ### Build and source
 
 ```bash
@@ -166,19 +178,59 @@ source install/setup.bash
 
 ### Launch with a rosbag
 
+The single entrypoint is `mapping.launch.py`. It starts `mapping_node`, `sdf_query_node`, `clock_node`, and (optionally) RViz, then runs `ros2 bag play` after `bag_delay` seconds.
+
 ```bash
-ros2 launch oren_ros mapping_with_bag.launch.py \
-    config_path:=<repo_root>/configs/v2/trainer-ros.yaml
+ros2 launch oren_ros mapping.launch.py \
+    bag_path:=<newer_college_bag_path>
 ```
 
-Optional arguments:
+The default `trainer_config_path` resolves to the installed
+`share/oren_ros/configs/trainer-ros.yaml` — override it to point at your own
+trainer YAML (e.g. `trainer-ros-newer-college.yaml` shipped with the package):
 
 ```bash
-ros2 launch oren_ros mapping_with_bag.launch.py \
+ros2 launch oren_ros mapping.launch.py \
     bag_path:=<newer_college_bag_path> \
-    config_path:=<repo_root>/configs/v2/trainer-ros.yaml \
+    trainer_config_path:=$(ros2 pkg prefix oren_ros)/share/oren_ros/configs/trainer-ros-newer-college.yaml \
     play_rate:=1.0 \
-    bag_delay:=1.0
+    bag_delay:=1.0 \
+    rviz:=true \
+    rviz_config:=$(ros2 pkg prefix oren_ros)/share/oren_ros/rviz/lidar.rviz
+```
+
+Launch arguments:
+
+| Argument | Default | Description |
+| --- | --- | --- |
+| `bag_path` | `ros2_bag` | Directory passed to `ros2 bag play`. |
+| `trainer_config_path` | `share/oren_ros/configs/trainer-ros.yaml` | Trainer YAML consumed by `mapping_node`. |
+| `play_rate` | `1.0` | `ros2 bag play -r` rate. |
+| `bag_delay` | `1.0` | Seconds to wait before starting bag playback. |
+| `use_sim_time` | `true` | Drives every node's clock from `/clock`. |
+| `visualize_sdf` | `true` | Spawns `sdf_query_node` for live GridMap output. |
+| `rviz` | `false` | Launches RViz alongside the mapping nodes. |
+| `rviz_config` | _(empty)_ | Path to a `.rviz` file; empty opens RViz with its default layout. |
+
+The launch file remaps `/robot/tf` → `/tf` and `/robot/tf_static` → `/tf_static` for the Newer College bag so `tf2_ros` sees the DLIO frames. Adjust this in `launch/mapping.launch.py` if your bag publishes TF on the default topics.
+
+### Configuring topics, modality, and QoS
+
+ROS-side parameters (sensor modality, topic names, QoS, sync tolerances, the SDF query grid) live in `oren_ros/configs/ros2-params.yaml` and are loaded automatically by the launch file. The most common knobs:
+
+- `modality`: `lidar` or `depth`.
+- `use_odom`: `true` syncs the sensor topic with `odom_topic` via `message_filters`; `false` looks up the sensor pose in the tf2 buffer at the message stamp.
+- `lidar_topic` / `depth_topic` / `odom_topic`: full QoS profile per topic (preset + per-field overrides).
+- `world_frame` / `sensor_frame`: tf2 lookup frames when `use_odom=false`.
+- `sdf_query_node.*`: 2D grid resolution, query plane height, attached frame, publish rate, and which outputs (`publish_grid_map`, `publish_point_cloud`, `publish_gradient`) to enable.
+
+Override individual parameters at launch time without editing the YAML:
+
+```bash
+ros2 launch oren_ros mapping.launch.py \
+    bag_path:=<bag> \
+    --ros-args -p oren_mapping_node.modality:=depth \
+              -p sdf_query_node.resolution:=0.1
 ```
 
 ## Docker

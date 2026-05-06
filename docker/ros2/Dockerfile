@@ -39,19 +39,28 @@ RUN DEBIAN_FRONTEND=noninteractive apt update -y && apt install -y \
 
 RUN DEBIAN_FRONTEND=noninteractive apt update -y && apt upgrade -y && \
     apt install -y \
-        ros-jazzy-desktop \
+        ros-jazzy-desktop-full \
         ros-dev-tools \
         python3-colcon-common-extensions \
         python3-rosdep \
         ros-jazzy-tf2 \
-        ros-jazzy-tf2-ros \
+        ros-jazzy-tf2-kdl \
         ros-jazzy-tf2-geometry-msgs \
+        ros-jazzy-tf2-msgs \
+        ros-jazzy-tf2-sensor-msgs \
+        ros-jazzy-tf2-py \
+        ros-jazzy-tf2-ros \
+        ros-jazzy-tf2-tools \
+        ros-jazzy-rqt-tf-tree \
         ros-jazzy-rosbag2-py \
         ros-jazzy-sensor-msgs \
         ros-jazzy-sensor-msgs-py \
         ros-jazzy-nav-msgs \
         ros-jazzy-geometry-msgs \
-        ros-jazzy-std-msgs
+        ros-jazzy-std-msgs \
+        ros-jazzy-grid-map-msgs \
+        ros-jazzy-grid-map-ros \
+        ros-jazzy-grid-map-rviz-plugin
 
 RUN rosdep init && rosdep update
 

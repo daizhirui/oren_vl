@@ -497,6 +497,11 @@ class EvaluatorBase:
             grid_vertex_filter=grid_vertex_filter,
         )
 
+        if not sdf_grid:
+            # extract_sdf_grid returns {} when grid_vertex_filter rejects every vertex
+            # (e.g. bounds don't intersect any inserted voxels yet).
+            return [o3d.geometry.TriangleMesh() for _ in fields]
+
         mask = None
         if grid_vertex_filter is not None:
             mask = sdf_grid["mask"].cpu().numpy().astype(np.bool_)

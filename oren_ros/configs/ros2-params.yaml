@@ -1,0 +1,101 @@
+# ROS 2 parameter overlay for `oren_mapping_node`. Apply with:
+#   ros2 launch oren_ros mapping_with_bag.launch.py \
+#       --ros-args --params-file <path>/ros2-params.yaml
+# Only parameters the dataloader actually declares should appear here — the
+# active set depends on `modality` and `use_odom`.
+
+/**/oren_mapping_node:
+    ros__parameters:
+        trainer_config_path: "" # required; pass via --ros-args -p trainer_config_path:=/path/to/config.yaml
+
+        # --- Sensor / pose source selection ---
+        modality: lidar                 # "depth" | "lidar"
+        use_odom: false                 # true: sync sensor with odom_topic via message_filters
+                                        # false: look up sensor pose in tf2 buffer at msg stamp
+        odom_msg_type: odometry         # "odometry" (nav_msgs/Odometry) | "pose_stamped" (geometry_msgs/PoseStamped)
+        depth_scale: 0.001              # multiplied with raw depth -> metres (16UC1 mm -> m)
+
+        # --- Frame names (only used when use_odom=false) ---
+        # DLIO publishes the odom->base_link->lidar tree; sensor_frame is left
+        # empty so the dataloader uses each PointCloud2's header.frame_id.
+        # The bag's TFs are on /robot/tf and /robot/tf_static — `ros2 bag play`
+        # must remap them to the default /tf and /tf_static topics for tf2_ros
+        # to see them, e.g.:
+        #   ros2 bag play <bag> --remap /robot/tf:=/tf /robot/tf_static:=/tf_static
+        world_frame: odom               # target frame for tf2 lookup
+        sensor_frame: ""                # source frame; empty -> msg.header.frame_id
+        tf_lookup_timeout_sec: 0.5      # bag playback can be jittery; allow more slack
+
+        # --- Time synchronization (use_odom=true) ---
+        sync_tolerance: 0.01            # ApproximateTimeSynchronizer slop (s)
+
+        # --- Streaming behavior ---
+        no_data_timeout_sec: 0.0        # shutdown stream after N s without data. 0 -> never timeout
+        frame_queue_maxsize: 32
+        idle_block_sec: 0.0             # >0 -> __getitem__ returns None after idle so the
+                                        # trainer can keep optimizing existing keyframes
+
+        # --- Topic configuration ---
+        # Each entry is a RosTopicParam: `path` plus the full QoS profile. Only
+        # the topics that the active modality / use_odom combination subscribes
+        # to are declared at runtime; remove any that don't apply.
+        #
+        # qos_preset: one of "", "system_default", "services_default",
+        #   "sensor_data", "parameter_events", "parameter_updates",
+        #   "action_status_default". Empty => use the per-field qos_* values.
+        # NOTE: per-field overrides below ALWAYS apply on top of a preset, so
+        # if you select a preset (e.g. sensor_data with reliability=best_effort)
+        # also set the matching qos_* fields, otherwise the defaults here will
+        # silently overwrite the preset.
+
+        lidar_topic:
+            # DLIO's per-scan deskewed cloud (~10 Hz, sensor_msgs/PointCloud2).
+            path: "/robot/dlio/odom_node/pointcloud/deskewed"
+            qos_preset: ""
+            qos_history: keep_last      # "keep_last" | "keep_all"
+            qos_depth: 10
+            qos_reliability: reliable   # bag advertises this topic as reliable
+            qos_durability: volatile    # "volatile" | "transient_local"
+            # qos_deadline_sec: 0
+            # qos_deadline_nanosec: 0
+            # qos_lifespan_sec: 0
+            # qos_lifespan_nanosec: 0
+            # qos_liveliness: automatic  # "automatic" | "manual_by_topic"
+            # qos_liveliness_lease_duration_sec: 0
+            # qos_liveliness_lease_duration_nanosec: 0
+            # avoid_ros_namespace_conventions: false
+
+        # depth_topic / odom_topic are only declared when modality=depth /
+        # use_odom=true; with the current settings ROS would warn about unused
+        # overrides, so they are intentionally omitted.
+
+/**/sdf_query_node:
+    ros__parameters:
+        # --- Grid geometry (forced odd at runtime so origin is a cell center) ---
+        resolution: 0.2                 # cell size in metres
+        x_cells: 101                    # columns along x
+        y_cells: 101                    # rows along y
+        x: 0.0                          # grid origin x (in world or attached frame)
+        y: 0.0                          # grid origin y
+        z: 0.0                          # query plane z
+
+        # --- Output selection ---
+        publish_grid_map: true
+        publish_point_cloud: false
+        publish_gradient: false         # if true, request gradients and add gradient_x/y/z layers
+        query_prior: false              # true -> query the prior-only SDF (sdf_prior)
+        publish_rate: 1.0               # Hz; <=0 disables timer (use trigger service)
+
+        # --- Frame attachment ---
+        # attached_to_frame=true -> grid origin is fixed in `attached_frame` and
+        # query points are transformed into `world_frame` via tf2 before each call.
+        # attached_to_frame=false -> grid origin is fixed in `world_frame`.
+        attached_to_frame: true
+        attached_frame: "os_sensor"
+        world_frame: "odom"
+
+        # --- Topics / services ---
+        query_service: "query_sdf"          # oren_msgs/srv/QuerySdf service name
+        map_topic: "sdf_grid_map"           # grid_map_msgs/GridMap publisher
+        point_cloud_topic: "sdf_point_cloud"
+        trigger_service: "sdf_trigger_query"  # std_srvs/Trigger to force one query+publish
