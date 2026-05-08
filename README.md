@@ -79,10 +79,6 @@ cd deps/pytorch3d
 pip install --no-build-isolation --verbose .
 cd ../..
 
-cd deps/sparse_octree
-python setup.py install
-cd ../..
-
 cd deps/erl_geometry
 pip install --no-build-isolation --verbose .
 cd ../..
@@ -131,7 +127,7 @@ We preprocess the data with our modified [DLIO](https://github.com/ExistentialRo
 
 ROS2 bag format is also available for the same sequence, which can be directly used with our ROS2 mapping node. You can also download it from [Hugging Face](https://huggingface.co/datasets/erl-ucsd/oren-datasets/resolve/main/newer-college-quad-dlio-bag.tar.gz).
 
-ROS 2 / Newer College workflows are driven by `configs/v2/trainer-newer_college.yaml`
+Newer College workflows are driven by `configs/trainer-newer_college.yaml`
 and the rosbag launch file described in [ROS 2 Mapping Node](#ros-2-mapping-node).
 
 ## Training
@@ -139,7 +135,7 @@ and the rosbag launch file described in [ROS 2 Mapping Node](#ros-2-mapping-node
 ### Replica
 
 ```bash
-python oren/oren/trainer.py --config configs/v2/replica.yaml
+python oren/oren/trainer.py --config configs/replica.yaml
 ```
 
 ### GUI Trainer
@@ -148,8 +144,8 @@ The GUI trainer enables interactive visualization and monitoring of training, in
 
 ```bash
 python oren/oren/gui_trainer.py \
-    --gui-config configs/v2/gui.yaml \
-    --trainer-config configs/v2/replica.yaml \
+    --gui-config configs/gui.yaml \
+    --trainer-config configs/replica.yaml \
     --gt-mesh-path <replica_preprocessed_path>/room0_mesh.ply \
     --copy-scene-bound-to-gui
 ```

@@ -60,5 +60,5 @@ cmake .. -DCMAKE_BUILD_TYPE=Release \
 
 oren contains code that uses the semi-sparse octree, marching cubes, etc. in various places.
 For example:
-- [octree, morton code and find voxel indices](../../oren/oren/semi_sparse_octree_v2.py)
+- [octree, morton code and find voxel indices](../../oren/oren/semi_sparse_octree.py)
 - [marching cubes](../../oren/oren/evaluator_base.py)

@@ -1,4 +1,4 @@
-base_config: ../v2/trainer-replica.yaml
+base_config: ../trainer-replica.yaml
 exp_name: replica/office1
 data:
     dataset_args:

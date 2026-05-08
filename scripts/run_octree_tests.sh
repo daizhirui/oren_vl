@@ -1,45 +1,44 @@
 #!/bin/bash
 
-# 按顺序执行octree分辨率测试
-echo "开始执行octree分辨率测试..."
+# Run octree resolution tests in order
+echo "Starting octree resolution tests..."
 
 echo "================================"
-echo "执行: 10-6-0.2.yaml"
+echo "Running: 10-6-0.2.yaml"
 echo "================================"
-python oren/trainer.py --config configs/v2/test-octree-resolution/10-6-0.2.yaml
+python oren/trainer.py --config configs/test-octree-resolution/10-6-0.2.yaml
 if [ $? -ne 0 ]; then
-    echo "错误: 10-6-0.2.yaml 执行失败"
+    echo "Error: 10-6-0.2.yaml failed"
     exit 1
 fi
 
 echo "================================"
-echo "执行: 11-7-0.1.yaml"
+echo "Running: 11-7-0.1.yaml"
 echo "================================"
-python oren/trainer.py --config configs/v2/test-octree-resolution/11-7-0.1.yaml
+python oren/trainer.py --config configs/test-octree-resolution/11-7-0.1.yaml
 if [ $? -ne 0 ]; then
-    echo "错误: 11-7-0.1.yaml 执行失败"
+    echo "Error: 11-7-0.1.yaml failed"
     exit 1
 fi
 
 echo "================================"
-echo "执行: 8-5-0.7.yaml"
+echo "Running: 8-5-0.7.yaml"
 echo "================================"
-python oren/trainer.py --config configs/v2/test-octree-resolution/8-5-0.7.yaml
+python oren/trainer.py --config configs/test-octree-resolution/8-5-0.7.yaml
 if [ $? -ne 0 ]; then
-    echo "错误: 8-5-0.7.yaml 执行失败"
+    echo "Error: 8-5-0.7.yaml failed"
     exit 1
 fi
 
 echo "================================"
-echo "执行: 9-6-0.4.yaml"
+echo "Running: 9-6-0.4.yaml"
 echo "================================"
-python oren/trainer.py --config configs/v2/test-octree-resolution/9-6-0.4.yaml
+python oren/trainer.py --config configs/test-octree-resolution/9-6-0.4.yaml
 if [ $? -ne 0 ]; then
-    echo "错误: 9-6-0.4.yaml 执行失败"
+    echo "Error: 9-6-0.4.yaml failed"
     exit 1
 fi
 
 echo "================================"
-echo "所有测试执行完成!"
+echo "All tests completed!"
 echo "================================"
-
