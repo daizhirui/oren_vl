@@ -1,5 +1,6 @@
 import os.path as osp
 from glob import glob
+from typing import Optional
 
 import numpy as np
 import open3d as o3d
@@ -16,12 +17,18 @@ class DataLoader(Dataset):
         data_path: str,
         min_depth: float = 0.0,
         max_depth: float = -1.0,
-        bound_min: torch.Tensor = None,
-        bound_max: torch.Tensor = None,
+        apply_bound: bool = False,
+        bound_min: Optional[torch.Tensor] = None,
+        bound_max: Optional[torch.Tensor] = None,
     ):
+        data_path = osp.expanduser(data_path)
+        data_path = osp.abspath(data_path)
+        data_path = data_path.rstrip("/")
+
         self.data_path = data_path
         self.min_depth = min_depth
         self.max_depth = max_depth
+        self.apply_bound = apply_bound
         self.bound_min = bound_min
         self.bound_max = bound_max
 
@@ -32,12 +39,8 @@ class DataLoader(Dataset):
             self.bound_min = np.min(mesh.vertices[:], axis=0).flatten().tolist()
             self.bound_max = np.max(mesh.vertices[:], axis=0).flatten().tolist()
 
-        if self.bound_min is not None:
-            assert self.bound_max is not None
-            self.bound_min = torch.tensor(self.bound_min).float()
-        if self.bound_max is not None:
-            assert self.bound_min is not None
-            self.bound_max = torch.tensor(self.bound_max).float()
+        self.bound_min = torch.tensor(self.bound_min).float()
+        self.bound_max = torch.tensor(self.bound_max).float()
 
         self.num_pcds = len(glob(osp.join(self.data_path, "ply/*.ply")))
         self.gt_pose = self.load_gt_pose()
@@ -80,7 +83,7 @@ class DataLoader(Dataset):
         pointcloud = self.load_pointcloud(index)
         pose = self.gt_pose[index]
         frame = LiDARFrame(index, pointcloud, pose)
-        if self.bound_min is not None and self.bound_max is not None:
+        if self.apply_bound:
             frame.apply_bound(self.bound_min, self.bound_max)
         return frame
 

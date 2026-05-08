@@ -1,25 +1,22 @@
 """Wrapper around `Trainer` that owns the ROS interface (services + shutdown).
 
-Mirrors the `GuiTrainer` pattern: builds a `Trainer`, attaches to its existing
-callback hooks (`training_iteration_end_callback`, `training_frame_start_callback`),
-and registers ROS 2 services on a shared node.
+Mirrors the `GuiTrainer` pattern: builds a `Trainer`, attaches to its existing callback hooks
+(`training_iteration_end_callback`, `training_frame_start_callback`), and registers ROS 2 services on a shared node.
 
 Threading: `Trainer.train()` runs on the main thread (CUDA + heavy work).
-Subscriber and service callbacks run on a `MultiThreadedExecutor` spinning in
-a background daemon thread (set up by the entry-point script). Service handlers
-enqueue requests into a `queue.Queue` and block on a `Future`; the main thread
-drains the queue between iterations and while idle (via `data_stream.on_idle`),
-so all model access is serialized.
+Subscriber and service callbacks run on a `MultiThreadedExecutor` spinning in a background daemon thread
+(set up by the entry-point script). Service handlers enqueue requests into a `queue.Queue` and block on a `Future`;
+the main thread drains the queue between iterations and while idle (via `data_stream.on_idle`), so all model access
+is serialized.
 """
-from __future__ import annotations
 
 import queue
 import threading
 from concurrent.futures import Future
-from typing import Callable, Optional
+from typing import Callable
 
 import torch
-from geometry_msgs.msg import Point, Vector3
+from geometry_msgs.msg import Vector3
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.node import Node
 
@@ -28,7 +25,7 @@ from oren.trainer import Trainer
 from oren.trainer_config import TrainerConfig
 from oren_msgs.srv import QuerySdf, SaveMesh, SaveModel
 
-from oren_ros.ros_wrapper import DataLoader as RosDataLoader
+from oren_ros.ros_dataloader import RosDataLoader
 
 
 class RosTrainer:
@@ -40,7 +37,7 @@ class RosTrainer:
         self.trainer = Trainer(trainer_cfg, data_stream=loader)
 
         # Service request queue + shutdown signal.
-        self._service_q: queue.Queue[tuple[Callable[[Trainer], object], Future]] = queue.Queue()
+        self._service_queue: queue.Queue[tuple[Callable[[Trainer], object], Future]] = queue.Queue()
         self._shutdown = threading.Event()
 
         # Trainer callbacks (run on the main / training thread).
@@ -52,19 +49,11 @@ class RosTrainer:
         # Service registration. Reentrant group so a handler waiting on Future.result()
         # doesn't block other service / subscriber callbacks.
         srv_cbg = ReentrantCallbackGroup()
-        ros_node.create_service(
-            QuerySdf, "query_sdf", self._srv_query_sdf, callback_group=srv_cbg
-        )
-        ros_node.create_service(
-            SaveMesh, "save_mesh", self._srv_save_mesh, callback_group=srv_cbg
-        )
-        ros_node.create_service(
-            SaveModel, "save_model", self._srv_save_model, callback_group=srv_cbg
-        )
+        ros_node.create_service(QuerySdf, "query_sdf", self._srv_query_sdf, callback_group=srv_cbg)
+        ros_node.create_service(SaveMesh, "save_mesh", self._srv_save_mesh, callback_group=srv_cbg)
+        ros_node.create_service(SaveModel, "save_model", self._srv_save_model, callback_group=srv_cbg)
 
-        ros_node.get_logger().info(
-            "[RosTrainer] services ready: /query_sdf /save_mesh /save_model"
-        )
+        ros_node.get_logger().info("[RosTrainer] services ready: /query_sdf /save_mesh /save_model")
 
     # ---------------------- main entry point ----------------------------------
 
@@ -84,7 +73,7 @@ class RosTrainer:
     def _drain_services(self, trainer: Trainer) -> None:
         while True:
             try:
-                fn, fut = self._service_q.get_nowait()
+                fn, fut = self._service_queue.get_nowait()
             except queue.Empty:
                 return
             try:
@@ -99,7 +88,7 @@ class RosTrainer:
 
     def _submit(self, fn: Callable[[Trainer], object], timeout: float = 60.0):
         fut: Future = Future()
-        self._service_q.put((fn, fut))
+        self._service_queue.put((fn, fut))
         return fut.result(timeout=timeout)
 
     def _srv_query_sdf(self, request, response):
@@ -112,16 +101,17 @@ class RosTrainer:
                 response.sdf = []
                 response.grad = []
                 return response
-            out = self._submit(lambda t: t.query_sdf(points, return_grad=True))
-            sdf_t: torch.Tensor = out["sdf"].detach().cpu().reshape(-1)
+            out = self._submit(lambda t: t.query_sdf(points, return_grad=request.return_grad, prior_only=request.prior))
+            sdf_t: torch.Tensor = out["sdf"].detach().cpu().reshape(-1)  # if request.prior, this equals sdf_prior
             response.sdf = sdf_t.tolist()
-            grad_t: Optional[torch.Tensor] = out.get("sdf_grad")
-            if grad_t is not None:
-                grad_t = grad_t.detach().cpu().reshape(-1, 3)
-                response.grad = [Vector3(x=float(g[0]), y=float(g[1]), z=float(g[2])) for g in grad_t]
+            if request.return_grad:
+                grad = out["grad"]
+                grad = grad["sdf_prior"] if request.prior else grad["sdf"]
+                grad = grad.detach().cpu().reshape(-1, 3)
+                response.grad = [Vector3(x=float(g[0]), y=float(g[1]), z=float(g[2])) for g in grad]
             else:
                 response.grad = []
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             self.ros_node.get_logger().error(f"[RosTrainer] query_sdf failed: {e}")
             response.sdf = []
             response.grad = []
@@ -129,10 +119,22 @@ class RosTrainer:
 
     def _srv_save_mesh(self, request, response):
         try:
-            self._submit(lambda t: t.save_mesh(request.path, prior=request.prior))
+            bound_min = list(request.bound_min) if request.use_bound else None
+            bound_max = list(request.bound_max) if request.use_bound else None
+            grid_resolution = request.resolution if request.resolution > 0.0 else None
+            self._submit(
+                lambda t: t.save_mesh(
+                    request.path,
+                    prior=request.prior,
+                    bound_min=bound_min,
+                    bound_max=bound_max,
+                    grid_resolution=grid_resolution,
+                    iso_value=request.iso_value,
+                )
+            )
             response.success = True
             response.message = f"mesh saved: {request.path} (prior={request.prior})"
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             response.success = False
             response.message = repr(e)
         return response
@@ -142,7 +144,7 @@ class RosTrainer:
             self._submit(lambda t: t.save_model(request.path))
             response.success = True
             response.message = f"model saved: {request.path}"
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             response.success = False
             response.message = repr(e)
         return response

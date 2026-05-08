@@ -1,5 +1,15 @@
 string path
-bool prior  # if true, save the prior-only mesh (sdf_prior); else the residual-corrected mesh
+
+# if true, save the prior-only mesh (sdf_prior); else the residual-corrected mesh
+bool prior
+
+# Optional overrides for mesh extraction. When use_bound is false the trainer's configured bounds are used.
+# resolution <= 0 falls back to cfg.mesh_resolution.
+bool use_bound
+float64[3] bound_min
+float64[3] bound_max
+float64 resolution
+float64 iso_value 0.0
 ---
 bool success
 string message

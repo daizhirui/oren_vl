@@ -29,7 +29,10 @@ def main(args=None):
     spin_thread.start()
 
     try:
-        cfg = TrainerConfig.get_argparser().parse_args()
+        node.declare_parameter("trainer_config_path", "")
+        config_path = node.get_parameter("trainer_config_path").value
+        assert config_path, "trainer_config_path parameter is required. Pass via --ros-args -p trainer_config_path:=/path/to/config.yaml"
+        cfg = TrainerConfig.from_yaml(config_path)
         ros_trainer = RosTrainer(cfg, node)
         ros_trainer.run()
     finally:

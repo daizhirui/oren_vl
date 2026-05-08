@@ -2,6 +2,9 @@ import os
 import random
 from typing import Callable, Optional
 
+import matplotlib
+
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 from tqdm import tqdm
@@ -30,12 +33,19 @@ class Trainer:
         else:
             self.data_stream = data_stream
 
-        # streaming sources signal an unbounded length with len() < 0
-        self.streaming = len(self.data_stream) < 0
+        # Streaming sources advertise themselves with a class attribute.
+        # Python's built-in len() rejects negative returns from __len__, so a length-based sentinel can't be used.
+        self.streaming = getattr(self.data_stream, "streaming", False)
 
-        # set the bound automatically
-        self.cfg.bound_min = (self.data_stream.bound_min - 0.1).cpu().tolist()
-        self.cfg.bound_max = (self.data_stream.bound_max + 0.1).cpu().tolist()
+        # set the bound automatically from the dataset if available.
+        # the bound is used for evaluation and mesh extraction.
+        # the training does not rely on the bound.
+        if self.data_stream.bound_min is not None and self.data_stream.bound_max is not None:
+            self.cfg.bound_min = (self.data_stream.bound_min - 0.1).cpu().tolist()
+            self.cfg.bound_max = (self.data_stream.bound_max + 0.1).cpu().tolist()
+
+        self.bound_min = torch.tensor(self.cfg.bound_min, dtype=torch.float32, device=self.cfg.device)
+        self.bound_max = torch.tensor(self.cfg.bound_max, dtype=torch.float32, device=self.cfg.device)
 
         if not self.streaming:
             if self.cfg.data.end_frame < 0:
@@ -273,6 +283,11 @@ class Trainer:
                 device=self.cfg.device,
             )
 
+            mask = torch.ones_like(self.samples.sampled_xyz[..., 0], dtype=torch.bool)
+            if not self.cfg.data.apply_bound:
+                mask = mask & (self.samples.sampled_xyz >= self.bound_min).all(dim=-1)
+                mask = mask & (self.samples.sampled_xyz <= self.bound_max).all(dim=-1)
+
         # self.samples.sampled_xyz: (n, m, 3)
         num_rays = self.samples.sampled_xyz.shape[0]
         if self.cfg.grad_method == "autodiff":
@@ -288,7 +303,8 @@ class Trainer:
                 voxel_indices_minus = self.find_voxel_indices(offset_points_minus)  # (n, m, 3)
         with self.timer_find_voxel_indices_sampled_xyz:
             voxel_indices = self.find_voxel_indices(self.samples.sampled_xyz)  # (n, m)
-            assert voxel_indices.min() != -1, "voxel_indices has -1"
+            mask = mask & (voxel_indices != -1)
+            # assert voxel_indices.min() != -1, "voxel_indices has -1"
 
         bs = int(self.cfg.batch_size / self.samples.sampled_xyz.shape[1])
 
@@ -343,6 +359,7 @@ class Trainer:
                         gt_sdf_stratified=self.samples.stratified_sdf,
                         positive_perturbation_mask=self.samples.positive_perturbation_mask,
                         perturb_eta=self.cfg.sample_rays.sigma_s,
+                        valid_mask=mask,
                     )
                     loss.backward()
                     self.optimizer.step()
@@ -443,25 +460,44 @@ class Trainer:
         self.logger.log_ckpt(self.model.state_dict(), path)
         self.logger.info(f"Model saved to {path}.")
 
-    def save_mesh(self, path: str, prior: bool = False) -> None:
+    def save_mesh(
+        self,
+        path: str,
+        prior: bool = False,
+        bound_min: Optional[list] = None,
+        bound_max: Optional[list] = None,
+        grid_resolution: Optional[float] = None,
+        iso_value: Optional[float] = None,
+    ) -> None:
+
         field = "sdf_prior" if prior else "sdf"
+        bound_min = bound_min if bound_min is not None else self.cfg.bound_min
+        bound_max = bound_max if bound_max is not None else self.cfg.bound_max
+        grid_resolution = grid_resolution if grid_resolution is not None else self.cfg.mesh_resolution
+        iso_value = iso_value if iso_value is not None else self.cfg.mesh_iso_value
+        self.logger.info(
+            f"Extracting mesh ({field}) with bound_min={bound_min}, bound_max={bound_max}, "
+            f"grid_resolution={grid_resolution}, iso_value={iso_value}..."
+        )
+
         [mesh] = self.evaluator.extract_mesh(
-            bound_min=self.cfg.bound_min,
-            bound_max=self.cfg.bound_max,
-            grid_resolution=self.cfg.mesh_resolution,
+            bound_min=bound_min,
+            bound_max=bound_max,
+            grid_resolution=grid_resolution,
             fields=[field],
-            iso_value=self.cfg.mesh_iso_value,
+            iso_value=iso_value,
         )
         self.logger.log_mesh(mesh, path)
         self.logger.info(f"Mesh ({field}) saved to {path}.")
 
-    def query_sdf(self, points: torch.Tensor, return_grad: bool = True) -> dict:
+    def query_sdf(self, points: torch.Tensor, return_grad: bool = True, prior_only: bool = False) -> dict:
         """Forward the model on the given points. Returns dict with sdf and (optional) sdf_grad."""
         return self.evaluator.forward_model(
             self.model,
             points.to(self.cfg.device),
             get_grad=return_grad,
             auto_grad=True,
+            prior_only=prior_only,
             device=self.cfg.device,
         )
 

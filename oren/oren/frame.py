@@ -36,14 +36,15 @@ class Frame:
 
 
 class DepthFrame(Frame):
+
     def __init__(
         self,
         fid: int,
         depth: torch.Tensor,
         intrinsic: torch.Tensor,
         ref_pose: torch.Tensor,
-        max_depth: Optional[float] = None,
         min_depth: Optional[float] = None,
+        max_depth: Optional[float] = None,
         device: str = None,
     ) -> None:
         """
@@ -52,9 +53,11 @@ class DepthFrame(Frame):
             depth: (H, W) in meter
             intrinsic: (3, 3) intrinsic matrix
             ref_pose: (4, 4) reference pose in world coordinates
-            max_depth: float, max depth in meter
             min_depth: float, min depth in meter
+            max_depth: float, max depth in meter
+            device: str, device to put the tensors on
         """
+
         super().__init__()
         self.stamp = fid
         self.h, self.w = depth.shape
