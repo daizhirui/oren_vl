@@ -13,7 +13,11 @@ class OctreeConfig(ConfigABC):
     # If True, skip insertion if voxel of size 1 already exists. This can speed up insertion if the search
     # implementation is efficient enough.
     skip_insertion_if_exists: bool = True
+    enable_sdf: bool = True
     gradient_augmentation: bool = True
-    residual_feature_dim: int = 4
-    residual_num_levels: int = 3
+    enable_occupancy: bool = False
+    init_occ_prior: float = 0.0
+    enable_implicit: bool = True
+    implicit_feature_dim: int = 4
+    implicit_num_levels: int = 3
     independent_smallest_leaf_vertex: bool = False

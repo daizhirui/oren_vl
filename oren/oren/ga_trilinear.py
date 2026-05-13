@@ -34,7 +34,7 @@ def trilinear_interpolation(points: torch.Tensor, per_point_vertex_values: torch
     """
     Perform trilinear interpolation.
     Args:
-        points: (n_points, 3) point coordinates relative to the voxel center, in [0, 1]^3
+        points: (n_points, 3) point coordinates relative to the voxel, in [0, 1]^3
         per_point_vertex_values: (n_points, 8, ...) values at the 8 vertices of the voxel containing each point
         little_endian: bool, whether the vertex ordering is little-endian. e.g. 1->(1,0,0). If False, big-endian is used.
     Returns:
@@ -61,15 +61,41 @@ def trilinear_interpolation(points: torch.Tensor, per_point_vertex_values: torch
     return interpolated
 
 
+def normalize_to_voxel_unit_cube(
+    points: torch.Tensor,
+    voxel_centers: torch.Tensor,
+    voxel_sizes: torch.Tensor,
+    resolution: float,
+):
+    """
+    Normalize point coordinates to the unit cube of the voxel for trilinear interpolation.
+    Args:
+        points: (n_points, 3) point cloud in world coordinates
+        voxel_centers: (n_points, 3) center of the voxel containing each point
+        voxel_sizes: (n_points, 1) grid size of the voxel containing each point
+        resolution: float, the resolution of the voxel grid
+    Returns:
+        p: (n_points, 3) coordinates of the points relative to the voxel, in [0, 1]^3
+    """
+    # voxel_sizes==0 means the voxel does not exist (caller indexed an out-of-bounds
+    # voxel_indices=-1 entry that wrapped to a zero-initialized buffer row). Clamp to
+    # avoid div-by-zero -> inf -> NaN in finite-difference gradients; callers mask out
+    # these positions in the loss anyway.
+    safe_sizes = voxel_sizes.clamp(min=1)
+    p = (points - voxel_centers) / (safe_sizes * resolution) + 0.5  # (n_points, 3)
+    return p
+
+
 def ga_trilinear(
     points: torch.Tensor,
     voxel_centers: torch.Tensor,
     voxel_sizes: torch.Tensor,
-    vertex_values: torch.Tensor,
-    vertex_grad: torch.Tensor,
     resolution: float,
+    vertex_values: torch.Tensor,
+    vertex_grad: torch.Tensor | None = None,
     gradient_augmentation: bool = True,
     little_endian: bool = False,
+    voxel_offsets: torch.Tensor | None = None,
 ):
     """
     Perform gradient-augmented trilinear interpolation.
@@ -77,22 +103,24 @@ def ga_trilinear(
         points: (n_points, 3) point cloud in world coordinates
         voxel_centers: (n_points, 3) center of the voxel containing each point
         voxel_sizes: (n_points, 1) grid size of the voxel containing each point
+        resolution: float, the resolution of the voxel grid
         vertex_values: (n_points, 8) values at the 8 vertices of the voxel containing each point
         vertex_grad: (n_points, 8, 3) gradient vectors at the 8 vertices of the voxel containing each point
-        resolution: float, the resolution of the voxel grid
         gradient_augmentation: bool, whether to use gradient-augmented trilinear interpolation
         little_endian: bool, whether the vertex ordering is little-endian. e.g. 1->(1,0,0). If False, big-endian is used.
+        voxel_offsets: (n_points, 3) coordinates of the points relative to the voxel, in [0, 1]^3. If None, they will be computed.
     """
-    with torch.no_grad():
-        vertices = get_vertices(voxel_centers, voxel_sizes, resolution)  # (n_points, 8, 3)
 
     if gradient_augmentation:
+        with torch.no_grad():
+            vertices = get_vertices(voxel_centers, voxel_sizes, resolution)  # (n_points, 8, 3)
         diffs = points.unsqueeze(1) - vertices  # (n_points, 8, 3)
         projection = torch.einsum("nik,nik->ni", vertex_grad, diffs)  # (n_points, 8)
         per_point_vertex_values = vertex_values + projection  # (n_points, 8)
     else:
         per_point_vertex_values = vertex_values  # (n_points, 8)
 
-    p = (points - voxel_centers) / (voxel_sizes * resolution) + 0.5  # (n_points, 3)
-    results = trilinear_interpolation(p, per_point_vertex_values, little_endian=little_endian)  # (n_points,)
-    return results, p
+    if voxel_offsets is None:
+        voxel_offsets = normalize_to_voxel_unit_cube(points, voxel_centers, voxel_sizes, resolution)  # (n_points, 3)
+    results = trilinear_interpolation(voxel_offsets, per_point_vertex_values, little_endian=little_endian)  # (n_points,)
+    return results, voxel_offsets

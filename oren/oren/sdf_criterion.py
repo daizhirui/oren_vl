@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 
 from oren.utils.config_abc import ConfigABC
+from oren.utils.registry import register_criterion
 
 
 def _masked_mean(values: torch.Tensor, mask: Optional[torch.Tensor]) -> torch.Tensor:
@@ -15,7 +16,7 @@ def _masked_mean(values: torch.Tensor, mask: Optional[torch.Tensor]) -> torch.Te
 
 
 @dataclass
-class CriterionConfig(ConfigABC):
+class SdfCriterionConfig(ConfigABC):
     boundary_loss_weight: float = 1.0
     boundary_loss_prior_weight: float = 1.0
     boundary_loss_type: str = "L1"
@@ -40,8 +41,25 @@ class CriterionConfig(ConfigABC):
     sign_loss_temperature: float = 100.0
 
 
-class Criterion(nn.Module):
-    def __init__(self, cfg: CriterionConfig, n_stratified: int, n_perturbed: int) -> None:
+@register_criterion
+class SdfCriterion(nn.Module):
+    """
+    SDF criterion for training implicit surface representations.
+
+    Sample layout per ray (B, N) where N = n_stratified + n_perturbed_neg + n_perturbed_pos + 1:
+        [:n_stratified]                                                stratified free-space samples (GT SDF in gt_sdf_stratified)
+        [n_stratified : n_stratified+n_perturbed_neg]                  negative perturbations, before surface (GT SDF > 0)
+        [n_stratified+n_perturbed_neg : n_stratified+n_perturbed]      positive perturbations, behind surface (GT SDF < 0)
+        [-1]                                                           on-surface sample (GT SDF = 0)
+
+    The GT SDF values for both perturbation slots are concatenated into gt_sdf_perturb in the same
+    order; positive_perturbation_mask is False for the first n_perturbed_neg and True for the next
+    n_perturbed_pos.
+    """
+
+    needs_grad = True  # criterion needs gradients w.r.t. the input positions for the eikonal loss
+
+    def __init__(self, cfg: SdfCriterionConfig, n_stratified: int, n_perturbed: int) -> None:
         super().__init__()
         self.cfg = cfg
         self.n_stratified = n_stratified
@@ -88,7 +106,8 @@ class Criterion(nn.Module):
         gt_sdf_perturb: torch.Tensor,
         gt_sdf_stratified: torch.Tensor,
         positive_perturbation_mask: torch.Tensor,
-        perturb_eta: float,
+        perturb_sigma_pos: float,
+        perturb_sigma_neg: float,
         valid_mask: Optional[torch.Tensor] = None,
     ):
         """
@@ -101,7 +120,10 @@ class Criterion(nn.Module):
             gt_sdf_perturb: (B, n_perturbed) Ground truth SDF values for perturbed samples.
             gt_sdf_stratified: (B, n_stratified) Ground truth SDF values for stratified samples.
             positive_perturbation_mask: (B, n_perturbed) Boolean mask indicating which perturbed samples are in free space (positive SDF).
-            perturb_eta: float, the sigma value used for the perturbation loss lower bound.
+            perturb_sigma_pos: float, lower bound on |pred SDF| for positive perturbations (samples behind the surface).
+                Should match cfg.sample_rays.sigma_s_pos.
+            perturb_sigma_neg: float, lower bound on |pred SDF| for negative perturbations (samples in front of the surface).
+                Should match cfg.sample_rays.sigma_s_neg.
             valid_mask: (B, N) Optional boolean mask. False entries are excluded from every loss reduction.
         """
         if valid_mask is not None:
@@ -129,7 +151,8 @@ class Criterion(nn.Module):
                 pred_sdf[:, self.n_stratified : self.n_stratified + self.n_perturbed],
                 positive_perturbation_mask,
                 gt_sdf_perturb,
-                perturb_eta,
+                perturb_sigma_pos,
+                perturb_sigma_neg,
             )
             loss += self.cfg.perturbation_loss_weight * perturbation_loss
             loss_dict["perturbation_loss"] = perturbation_loss.item()
@@ -138,7 +161,8 @@ class Criterion(nn.Module):
                 pred_prior[:, self.n_stratified : self.n_stratified + self.n_perturbed],
                 positive_perturbation_mask,
                 gt_sdf_perturb,
-                perturb_eta,
+                perturb_sigma_pos,
+                perturb_sigma_neg,
             )
             loss += self.cfg.perturbation_loss_prior_weight * perturbation_loss_prior
             loss_dict["perturbation_loss_prior"] = perturbation_loss_prior.item()
@@ -207,7 +231,8 @@ class Criterion(nn.Module):
         pred_sdf_perturb: torch.Tensor,
         positive_perturbation_mask: torch.Tensor,
         gt_sdf_perturb: torch.Tensor,
-        perturb_eta: float,
+        perturb_sigma_pos: float,
+        perturb_sigma_neg: float,
     ):
         # Clone to avoid modifying input tensors
         pred_sdf_perturb = pred_sdf_perturb.clone()
@@ -218,7 +243,13 @@ class Criterion(nn.Module):
         gt_sdf_perturb[positive_perturbation_mask] = -gt_sdf_perturb[positive_perturbation_mask]
 
         perturb_loss_upperbound = gt_sdf_perturb
-        perturb_loss_lowerbound = perturb_eta * 1.0 * torch.ones_like(gt_sdf_perturb)
+        # Lower bound depends on which side of the surface the sample is on, matching the sampling
+        # range floor (|offset| >= sigma_s_pos or sigma_s_neg).
+        perturb_loss_lowerbound = torch.where(
+            positive_perturbation_mask,
+            torch.full_like(pred_sdf_perturb, perturb_sigma_pos),
+            torch.full_like(pred_sdf_perturb, perturb_sigma_neg),
+        )
 
         above_upper_loss = torch.clamp(pred_sdf_perturb - perturb_loss_upperbound, min=0)
         below_lower = torch.clamp(perturb_loss_lowerbound - pred_sdf_perturb, min=0)

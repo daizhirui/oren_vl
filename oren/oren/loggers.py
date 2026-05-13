@@ -9,6 +9,7 @@ import torch
 import yaml
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
+from colorama import Fore, Style
 
 
 class BasicLogger:
@@ -49,12 +50,12 @@ class BasicLogger:
         yaml.dump(config_dict, open(out_path, "w"))
 
     def log_mesh(self, mesh, name="final_mesh.ply"):
-        out_path = os.path.join(self.mesh_dir, name)
+        out_path = name if os.path.isabs(name) else os.path.join(self.mesh_dir, name)
         os.makedirs(os.path.dirname(out_path), exist_ok=True)
         o3d.io.write_triangle_mesh(out_path, mesh)
 
     def log_point_cloud(self, pcd, name="final_points.ply"):
-        out_path = os.path.join(self.mesh_dir, name)
+        out_path = name if os.path.isabs(name) else os.path.join(self.mesh_dir, name)
         os.makedirs(os.path.dirname(out_path), exist_ok=True)
         o3d.io.write_point_cloud(out_path, pcd)
 
@@ -74,7 +75,7 @@ class BasicLogger:
         if isinstance(rgb, torch.Tensor):
             rgb = rgb.detach().cpu().numpy()
         rgb = cv2.cvtColor((rgb * 255).astype(np.uint8), cv2.COLOR_RGB2BGR)
-        img_path = os.path.join(self.img_dir, name)
+        img_path = name if os.path.isabs(name) else os.path.join(self.img_dir, name)
         os.makedirs(os.path.dirname(img_path), exist_ok=True)
         cv2.imwrite(img_path, rgb)
 
@@ -82,10 +83,14 @@ class BasicLogger:
         if isinstance(depth, torch.Tensor):
             depth = depth.detach().cpu().numpy()
         depth = (depth * 1000).astype(np.uint16)  # Convert to mm and uint16
-        img_path = os.path.join(self.img_dir, name)
+        img_path = name if os.path.isabs(name) else os.path.join(self.img_dir, name)
         os.makedirs(os.path.dirname(img_path), exist_ok=True)
         cv2.imwrite(img_path, depth)
 
     @staticmethod
     def info(msg: str):
         tqdm.write(msg)
+
+    @staticmethod
+    def warn(msg: str):
+        tqdm.write(Fore.YELLOW + msg + Style.RESET_ALL)

@@ -1,8 +1,8 @@
 cfg_identifier: oren.trainer_config.TrainerConfig
-trainer_identifier: oren.sdf_trainer.SdfTrainer
+trainer_identifier: oren.occ_trainer.OccTrainer
 seed: 12345
 log_dir: logs
-exp_name: replica_for_planning
+exp_name: replica_occ
 device: cuda
 data:
     cfg_identifier: oren.dataset.data_config.DataConfig
@@ -12,11 +12,11 @@ data:
         min_depth: 0.0
         max_depth: -1.0
     apply_bound: false   # if false, bbox crop is applied after generate_sdf_samples via valid_mask
-    bound_min:           # null -> dataset auto-derives from mesh
+    bound_min:
     bound_max:
     start_frame: 0
     end_frame: -1
-bound_min: [-10, -10, -10] # used for mesh extraction; auto-overwritten from dataset bounds at trainer init
+bound_min: [-10, -10, -10]
 bound_max: [10, 10, 10]
 key_frame_set:
     cfg_identifier: oren.key_frame_set.KeyFrameSetConfig
@@ -26,9 +26,9 @@ key_frame_set:
     frame_selection: multiple_max_set_coverage
     selection_window_size: 8
     frame_weight: uniform
-model_identifier: oren.sdf_network.SdfNetwork
+model_identifier: oren.occ_network.OccNetwork
 model:
-    cfg_identifier: oren.sdf_network.SdfNetworkConfig
+    cfg_identifier: oren.occ_network.OccNetworkConfig
     octree_cfg:
         cfg_identifier: oren.octree_config.OctreeConfig
         resolution: 0.1
@@ -37,10 +37,12 @@ model:
         init_voxel_num: 200000
         independent_smallest_leaf_vertex: false
         insertion_threshold: 3
-        skip_insertion_if_exists: true # speed up a bit
+        skip_insertion_if_exists: true
         implicit_feature_dim: 3
         implicit_num_levels: 1
-        gradient_augmentation: true
+        enable_sdf: false
+        enable_occupancy: true
+        gradient_augmentation: false
     residual_net_cfg:
         cfg_identifier: oren.residual_net.ResidualNetConfig
         mlp_activation: LeakyReLU
@@ -48,36 +50,23 @@ model:
         output_scale: 0.1
         output_dim: 1
         implicit_feature_dim: 1 # will be overwritten by octree_cfg implicit_feature_dim * implicit_num_levels
-criterion_identifier: oren.sdf_criterion.SdfCriterion
+criterion_identifier: oren.occ_criterion.OccCriterion
 criterion:
-    cfg_identifier: oren.sdf_criterion.SdfCriterionConfig
-    boundary_loss_weight: 1000
-    perturbation_loss_weight: 200
-    eikonal_loss_surface_weight: 10
-    eikonal_loss_perturbation_weight: 3
-    eikonal_loss_space_weight: 10
-    projection_loss_weight: 100
-    boundary_loss_prior_weight: 1000
-    perturbation_loss_prior_weight: 200
-    eikonal_loss_surface_prior_weight: 10
-    eikonal_loss_perturbation_prior_weight: 3
-    eikonal_loss_space_prior_weight: 10
-    projection_loss_prior_weight: 100
-    boundary_loss_type: L1
-    perturbation_loss_type: L1
-    eikonal_loss_type: L1
-    projection_loss_type: L1
-    perturbation_loss_exp_penalty: 10.0
-    heat_loss_weight: 0.0
-    heat_loss_lambda: 4.0
-    sign_loss_free_weight: 0.0
-    sign_loss_occ_weight: 0.0
-    sign_loss_temperature: 100.0
+    cfg_identifier: oren.occ_criterion.OccCriterionConfig
+    surface_target: 1.0   # 1.0 -> p~0.73 inside; switch to 0.5 for decision-boundary semantics
+    surface_loss_weight: 1.0
+    surface_loss_prior_weight: 1.0
+    free_loss_weight: 1.0
+    free_loss_prior_weight: 1.0
+    occ_loss_weight: 1.0
+    occ_loss_prior_weight: 1.0
+    occ_loss_mode: hinge   # bce | hinge | off
+    occ_loss_hinge_margin: 1.0
 num_init_frames: 3
 init_frame_iterations: 10
 num_iterations_per_frame: 1
 num_rays_total: 20480
-extra_surface_sample: false # not helpful
+extra_surface_sample: false
 frame_downsample: 100
 sample_rays:
     cfg_identifier: oren.utils.sampling.SampleRaysConfig
@@ -87,16 +76,16 @@ sample_rays:
     depth_min: 0.1
     depth_max: 10.0
     surface_margin: 0.09
-    sigma_s_pos: 0.02
-    sigma_s_neg: 0.02
+    sigma_s_pos: 0.03
+    sigma_s_neg: 0.03
 batch_size: 204800
 lr: 0.005
-grad_method: finite_difference
+grad_method: finite_difference   # unused for OccCriterion (needs_grad=False), kept for config compatibility
 finite_difference_eps: 0.03
 final_iterations: 0
 save_mesh: true
 mesh_resolution: 0.02
-mesh_iso_value: 0.0
+mesh_iso_value: 0.0   # logit=0 surface boundary
 clean_mesh: true
 ckpt_interval: -1
 profiling: false

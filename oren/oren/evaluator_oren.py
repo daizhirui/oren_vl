@@ -6,7 +6,7 @@ from tqdm import tqdm
 
 from oren import np, o3d, torch
 from oren.evaluator_base import EvaluatorBase
-from oren.model import SdfNetwork, SdfNetworkConfig
+from oren.sdf_network import SdfNetwork, SdfNetworkConfig
 from oren.utils.dict_util import flatten_dict
 
 
@@ -207,7 +207,7 @@ class OrenEvaluator(EvaluatorBase):
         grid_vertex_filter: Optional[Callable[[torch.Tensor], torch.Tensor]] = None,
     ):
         if self.clean_mesh and grid_vertex_filter is None:
-            grid_vertex_filter = self.model.grid_vertex_filter
+            grid_vertex_filter = self.model.octree.grid_vertex_filter
 
         if fields is None:
             fields = ["sdf_prior", "sdf"]
@@ -292,7 +292,7 @@ def main():
             bound_min = trainer_cfg.bound_min
         if bound_max is None:
             bound_max = trainer_cfg.bound_max
-        results = evaluator.extract_sdf_grid(
+        results = evaluator.extract_field_grid(
             bound_min=bound_min,
             bound_max=bound_max,
             grid_resolution=args.grid_resolution,

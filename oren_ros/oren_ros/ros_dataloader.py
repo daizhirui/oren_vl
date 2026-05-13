@@ -280,7 +280,7 @@ class RosDataLoader:
     def _on_synced_depth(self, img_msg: Image, odom_msg) -> None:
         try:
             self._last_msg_time = time.monotonic()
-            depth = _image_to_depth_tensor(img_msg)
+            depth = _image_to_depth_tensor(img_msg, self._depth_scale)
             pose = _odom_msg_to_matrix(odom_msg)
             self._enqueue_depth(depth, pose)
         except Exception as e:
@@ -378,7 +378,9 @@ class RosDataLoader:
             except queue.Empty:
                 pass
             self._frame_queue.put_nowait(frame)
-            self.node.get_logger().warn("[RosDataLoader] frame queue full; dropped oldest frame")
+            self.node.get_logger().warn(
+                f"[RosDataLoader] frame queue full; dropped oldest frame. Current frame count: {self._frame_count}"
+            )
 
     def _check_no_data_timeout(self) -> None:
         if self._last_msg_time is None or self._shutdown.is_set():
@@ -434,8 +436,7 @@ def _image_to_depth_tensor(msg: Image, depth_scale: float) -> torch.Tensor:
     dtype = _DEPTH_ENCODING_DTYPES.get(msg.encoding)
     if dtype is None:
         raise ValueError(
-            f"unsupported depth image encoding: {msg.encoding!r} "
-            f"(supported: {sorted(_DEPTH_ENCODING_DTYPES)})"
+            f"unsupported depth image encoding: {msg.encoding!r} " f"(supported: {sorted(_DEPTH_ENCODING_DTYPES)})"
         )
     if msg.is_bigendian and dtype != np.uint8:
         dtype = np.dtype(dtype).newbyteorder(">")

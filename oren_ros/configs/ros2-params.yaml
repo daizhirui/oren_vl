@@ -95,7 +95,7 @@
         world_frame: "odom"
 
         # --- Topics / services ---
-        query_service: "query_sdf"          # oren_msgs/srv/QuerySdf service name
+        query_service: "query_scalar_field" # oren_msgs/srv/QueryScalarField service name (SDF or occupancy logits)
         map_topic: "sdf_grid_map"           # grid_map_msgs/GridMap publisher
         point_cloud_topic: "sdf_point_cloud"
         trigger_service: "sdf_trigger_query"  # std_srvs/Trigger to force one query+publish

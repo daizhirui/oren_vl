@@ -1,6 +1,0 @@
-geometry_msgs/Point[] points
-bool prior  # if true, query the prior-only SDF (sdf_prior); else the residual-corrected SDF
-bool return_grad  # if true, also return the SDF gradient at the query points
----
-float32[] sdf
-geometry_msgs/Vector3[] grad

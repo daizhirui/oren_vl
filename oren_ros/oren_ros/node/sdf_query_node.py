@@ -16,7 +16,7 @@ from sensor_msgs.msg import PointCloud2, PointField
 from std_msgs.msg import Float32MultiArray, MultiArrayDimension, MultiArrayLayout
 from std_srvs.srv import Trigger
 
-from oren_msgs.srv import QuerySdf
+from oren_msgs.srv import QueryScalarField
 
 
 class SdfQueryNode(Node):
@@ -39,7 +39,7 @@ class SdfQueryNode(Node):
         self.declare_parameter("attached_frame", "sdf_query_frame")
         self.declare_parameter("world_frame", "map")
         self.declare_parameter("query_prior", False)
-        self.declare_parameter("query_service", "query_sdf")
+        self.declare_parameter("query_service", "query_scalar_field")
         self.declare_parameter("map_topic", "sdf_grid_map")
         self.declare_parameter("point_cloud_topic", "sdf_point_cloud")
         self.declare_parameter("trigger_service", "sdf_trigger_query")
@@ -86,7 +86,7 @@ class SdfQueryNode(Node):
         cloud_topic = str(self.get_parameter("point_cloud_topic").value)
         trigger_service = str(self.get_parameter("trigger_service").value)
 
-        self._sdf_client = self.create_client(QuerySdf, query_service)
+        self._sdf_client = self.create_client(QueryScalarField, query_service)
         self._pub_map = self.create_publisher(GridMap, map_topic, 10) if self._publish_grid_map else None
         self._pub_pcd = self.create_publisher(PointCloud2, cloud_topic, 10) if self._publish_point_cloud else None
         self.create_service(Trigger, trigger_service, self._on_trigger)
@@ -147,8 +147,8 @@ class SdfQueryNode(Node):
             return True
         return False
 
-    def _build_request(self, pts_world: np.ndarray) -> QuerySdf.Request:
-        req = QuerySdf.Request()
+    def _build_request(self, pts_world: np.ndarray) -> QueryScalarField.Request:
+        req = QueryScalarField.Request()
         req.points = [Point(x=float(p[0]), y=float(p[1]), z=float(p[2])) for p in pts_world]
         req.return_grad = self._publish_gradient
         req.prior = self._query_prior
@@ -181,7 +181,7 @@ class SdfQueryNode(Node):
             self._inflight = False
             self._inflight_stamp = None
         try:
-            response: QuerySdf.Response = future.result()
+            response: QueryScalarField.Response = future.result()
         except Exception as e:
             self.get_logger().warn(f"service call failed: {e}")
             return
@@ -207,7 +207,7 @@ class SdfQueryNode(Node):
             response.message = "service call timed out"
             return response
         try:
-            query_response: QuerySdf.Response = future.result()
+            query_response: QueryScalarField.Response = future.result()
         except Exception as e:
             response.success = False
             response.message = f"service call raised: {e}"
@@ -224,12 +224,12 @@ class SdfQueryNode(Node):
 
     # ------------------------------------------------------------------ publish
 
-    def _publish(self, response: QuerySdf.Response, stamp: Time) -> None:
+    def _publish(self, response: QueryScalarField.Response, stamp: Time) -> None:
         n = self._x_cells * self._y_cells
-        if len(response.sdf) != n:
-            self.get_logger().warn(f"response size {len(response.sdf)} != expected {n}; dropping")
+        if len(response.value) != n:
+            self.get_logger().warn(f"response size {len(response.value)} != expected {n}; dropping")
             return
-        sdf = np.asarray(response.sdf, dtype=np.float32)
+        sdf = np.asarray(response.value, dtype=np.float32)
         grad = None
         if self._publish_gradient:
             if len(response.grad) == n:

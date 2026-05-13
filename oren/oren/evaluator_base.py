@@ -105,7 +105,7 @@ class EvaluatorBase:
         diff = sdf_pred - sdf_gt
         return dict(mae=diff.abs().mean().item(), rmse=(diff**2).mean().sqrt().item())
 
-    def _grad_metrics(self, grad_pred: torch.Tensor, grad_gt: torch.Tensor, mask: Optional[torch.Tensor] = None):
+    def _sdf_grad_metrics(self, grad_pred: torch.Tensor, grad_gt: torch.Tensor, mask: Optional[torch.Tensor] = None):
         grad_pred /= grad_pred.norm(dim=-1, keepdim=True) + 1e-8
         grad_gt /= grad_gt.norm(dim=-1, keepdim=True) + 1e-8
         cos_sim = (grad_pred * grad_gt).sum(dim=-1)
@@ -204,7 +204,7 @@ class EvaluatorBase:
         positive_mask = {k: (result[k] > 0) & positive_mask_gt for k in sdf_fields}
         grad_metrics = dict(
             near_surface={
-                k: self._grad_metrics(
+                k: self._sdf_grad_metrics(
                     result["grad"][k][near_surface_mask],
                     gt_sdf_grad[near_surface_mask],
                     positive_mask[k][near_surface_mask],
@@ -212,7 +212,7 @@ class EvaluatorBase:
                 for k in sdf_fields
             },
             far_away={
-                k: self._grad_metrics(
+                k: self._sdf_grad_metrics(
                     result["grad"][k][far_away_mask],
                     gt_sdf_grad[far_away_mask],
                     positive_mask[k][far_away_mask],
@@ -220,7 +220,7 @@ class EvaluatorBase:
                 for k in sdf_fields
             },
             all={
-                k: self._grad_metrics(
+                k: self._sdf_grad_metrics(
                     result["grad"][k][all_mask],
                     gt_sdf_grad[all_mask],
                     positive_mask[k][all_mask],
@@ -258,7 +258,7 @@ class EvaluatorBase:
         pred_mesh = trimesh.load_mesh(pred_mesh_path)
         gt_mesh = trimesh.load_mesh(gt_mesh_path)
 
-        bbox, bbox_def = _load_bbox(bbox_def_file)
+        bbox, _ = _load_bbox(bbox_def_file)
         pred_mesh = _crop_to_bbox(pred_mesh, bbox)
         gt_mesh = _crop_to_bbox(gt_mesh, bbox)
 
@@ -328,11 +328,10 @@ class EvaluatorBase:
         pred_mesh = trimesh.load_mesh(pred_mesh_path)
         gt_pts_all = _load_pointcloud(gt_pointcloud_path)
 
-        bbox, bbox_def = _load_bbox(bbox_def_file)
-        pred_mesh = _crop_to_bbox(pred_mesh, bbox)
+        bbox, _ = _load_bbox(bbox_def_file)
         if bbox is not None:
-            points = np.asarray(gt_pts_all)
-            bbox_
+            pred_mesh = _crop_to_bbox(pred_mesh, bbox)
+            gt_pts_all = gt_pts_all[bbox.contains(gt_pts_all)]
 
         pred_pts = trimesh.sample.sample_surface(pred_mesh, num_samples, seed=seed)[0]
         num_gt = gt_pts_all.shape[0]
@@ -340,6 +339,8 @@ class EvaluatorBase:
             rng = np.random.default_rng(seed)
             indices = rng.choice(gt_pts_all.shape[0], num_samples, replace=False)
             gt_pts = gt_pts_all[indices]
+        else:
+            gt_pts = gt_pts_all
 
         gt_tree = cKDTree(gt_pts_all)
         pred_tree = cKDTree(pred_pts)
@@ -414,7 +415,7 @@ class EvaluatorBase:
         return metrics
 
     @torch.no_grad()
-    def extract_sdf_grid(
+    def extract_field_grid(
         self,
         bound_min: List[float],
         bound_max: List[float],
@@ -423,7 +424,7 @@ class EvaluatorBase:
         device: Optional[str] = None,
     ):
         """
-        Extract SDF grid from the model.
+        Run the model on a 3D grid and return whatever fields it produces (e.g. SDF or occupancy logits).
         Args:
             bound_min: Minimum bound of the 3D grid (list of 3 floats)
             bound_max: Maximum bound of the 3D grid (list of 3 floats)
@@ -490,32 +491,32 @@ class EvaluatorBase:
 
         self.model.eval()
 
-        sdf_grid = self.extract_sdf_grid(
+        field_grid = self.extract_field_grid(
             bound_min=bound_min,
             bound_max=bound_max,
             grid_resolution=grid_resolution,
             grid_vertex_filter=grid_vertex_filter,
         )
 
-        if not sdf_grid:
-            # extract_sdf_grid returns {} when grid_vertex_filter rejects every vertex
+        if not field_grid:
+            # extract_field_grid returns {} when grid_vertex_filter rejects every vertex
             # (e.g. bounds don't intersect any inserted voxels yet).
             return [o3d.geometry.TriangleMesh() for _ in fields]
 
         mask = None
         if grid_vertex_filter is not None:
-            mask = sdf_grid["mask"].cpu().numpy().astype(np.bool_)
+            mask = field_grid["mask"].cpu().numpy().astype(np.bool_)
 
         meshes: List[o3d.geometry.TriangleMesh] = []
         for field in fields:
-            assert field in sdf_grid, f"Field {field} not found in model output"
-            values = sdf_grid[field].cpu().numpy().astype(np.float64)
+            assert field in field_grid, f"Field {field} not found in model output"
+            values = field_grid[field].cpu().numpy().astype(np.float64)
             mc = MarchingCubes()
 
             if mask is None:
                 grid_values = values  # (nx, ny, nz)
             else:
-                grid_shape = sdf_grid["grid_shape"].cpu().numpy().astype(np.int32)
+                grid_shape = field_grid["grid_shape"].cpu().numpy().astype(np.int32)
                 grid_values = np.ones(grid_shape, dtype=np.float64)
                 grid_values[mask] = values  # (nx, ny, nz)
 

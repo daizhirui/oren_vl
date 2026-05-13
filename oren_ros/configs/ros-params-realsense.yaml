@@ -1,0 +1,93 @@
+# ROS 2 parameter overlay for `oren_mapping_node` driving the realsense
+# rosbag at ~/D/OneDrive-UCSD/oren-drone/jetson_depth_manual_carry_1.
+#
+# Apply with:
+#   ros2 launch oren_ros mapping_with_bag.launch.py \
+#       --ros-args --params-file <path>/ros-params-realsense.yaml
+#
+# Bag-relevant topics (verified via ros2 bag info + one-frame peek):
+#   /quad/depth_img       sensor_msgs/Image           1817 msgs (~26 Hz, 32FC1, 848x480, frame_id=camera_link)
+#   /quad/odometry        nav_msgs/Odometry           6297 msgs (~91 Hz, header.frame_id=world)
+#   /quad/depth_img_pose  geometry_msgs/PoseStamped   1853 msgs (alt pose source, frame_id=world)
+# No /tf or /tf_static are recorded, so use_odom=true is required.
+# Recorded QoS for /quad/depth_img and /quad/odometry: KEEP_LAST depth=1,
+# reliability=RELIABLE, durability=VOLATILE — mirrored below.
+
+/**/oren_mapping_node:
+    ros__parameters:
+        trainer_config_path: "" # required; pass via --ros-args -p trainer_config_path:=/path/to/trainer-ros-realsense-sdf.yaml
+
+        # --- Sensor / pose source selection ---
+        modality: depth                 # realsense depth image
+        use_odom: true                  # no /tf in bag -> must sync with pose topic
+        odom_msg_type: pose_stamped     # /quad/depth_img_pose is geometry_msgs/PoseStamped
+        depth_scale: 1.0                # encoding is 32FC1 (float metres) -> no scaling
+
+        # --- Frame names (unused when use_odom=true, kept for documentation) ---
+        world_frame: world              # frame_id reported in /quad/depth_img_pose
+        sensor_frame: ""                # empty -> use depth msg's header.frame_id
+        tf_lookup_timeout_sec: 0.5
+
+        # --- Time synchronization (use_odom=true) ---
+        # /quad/depth_img_pose is published 1:1 with /quad/depth_img and shares
+        # the same header stamp, so a tight 10 ms slop is more than enough.
+        sync_tolerance: 0.01
+
+        # --- Streaming behavior ---
+        # Bag has a ~6.5 s synchronized gap in all sensor streams mid-recording
+        # (depth_img / odom / depth_img_pose all pause together), so the timeout
+        # must exceed that or the trainer shuts down prematurely. 10 s gives a
+        # safe margin and still triggers graceful end-of-stream shutdown.
+        no_data_timeout_sec: 15.0
+        frame_queue_maxsize: 100
+        idle_block_sec: 0.0
+
+        # --- Topic configuration ---
+        depth_topic:
+            path: "/quad/depth_img"
+            qos_preset: ""
+            qos_history: keep_last
+            qos_depth: 1                # bag publisher advertises depth=1
+            qos_reliability: best_effort
+            qos_durability: volatile
+
+        odom_topic:
+            path: "/quad/depth_img_pose"
+            qos_preset: ""
+            qos_history: keep_last
+            qos_depth: 1                # bag publisher advertises depth=1
+            qos_reliability: best_effort
+            qos_durability: volatile
+
+        # lidar_topic intentionally omitted (modality=depth).
+
+/**/sdf_query_node:
+    ros__parameters:
+        # --- Grid geometry (cells forced odd at runtime so origin is a cell center) ---
+        # Indoor realsense scene; 0.1 m cells over ~10 m square plane.
+        resolution: 0.1
+        x_cells: 101
+        y_cells: 101
+        x: 0.0
+        y: 0.0
+        z: 1.0                          # query a slice ~1 m above the floor
+
+        # --- Output selection ---
+        publish_grid_map: true
+        publish_point_cloud: false
+        publish_gradient: false
+        query_prior: false
+        publish_rate: 1.0
+
+        # --- Frame attachment ---
+        # No /tf in the bag, so we cannot attach the grid to a moving frame;
+        # publish the grid statically in the trainer's world frame.
+        attached_to_frame: false
+        attached_frame: ""
+        world_frame: "world"            # matches /quad/depth_img_pose header.frame_id
+
+        # --- Topics / services ---
+        query_service: "query_scalar_field"
+        map_topic: "sdf_grid_map"
+        point_cloud_topic: "sdf_point_cloud"
+        trigger_service: "sdf_trigger_query"

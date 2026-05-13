@@ -27,11 +27,11 @@ class VisualizeOctreeConfig(ConfigABC):
     interactive: bool = False              # open an Open3D window (default if no screenshot)
 
 
-def per_voxel_features(vertex_indices: torch.Tensor, residual_features: torch.Tensor) -> torch.Tensor:
-    """Average residual features over the (up to 8) valid vertices of each voxel."""
+def per_voxel_features(vertex_indices: torch.Tensor, implicit_features: torch.Tensor) -> torch.Tensor:
+    """Average implicit features over the (up to 8) valid vertices of each voxel."""
     valid = vertex_indices >= 0  # (V, 8)
     safe = torch.where(valid, vertex_indices, torch.zeros_like(vertex_indices)).long()
-    vert_feats = residual_features[safe]  # (V, 8, C)
+    vert_feats = implicit_features[safe]  # (V, 8, C)
     vert_feats = vert_feats * valid.unsqueeze(-1).float()
     counts = valid.sum(dim=1, keepdim=True).clamp(min=1).float()
     return vert_feats.sum(dim=1) / counts  # (V, C)
@@ -86,7 +86,7 @@ def main(cfg: VisualizeOctreeConfig) -> None:
     voxels = state["voxels"]                       # (N, 4) [x, y, z, discrete_size]
     voxel_centers = state["voxel_centers"]         # (N, 3) meters
     vertex_indices = state["vertex_indices"]       # (N, 8)
-    residual_features = state["residual_features"] # (Vmax, C)
+    implicit_features = state["implicit_features"] # (Vmax, C)
     octree_cfg = state["octree_cfg"]
     resolution = float(octree_cfg["resolution"])
 
@@ -95,11 +95,11 @@ def main(cfg: VisualizeOctreeConfig) -> None:
     leaf_mask = (voxels[:, -1] == 1).numpy()
     print(
         f"Loaded octree: {N} buffer rows, {int(leaf_mask.sum())} finest leaves; "
-        f"residual features {tuple(residual_features.shape)}."
+        f"implicit features {tuple(implicit_features.shape)}."
     )
 
     # Per-node feature (averaged over the up-to-8 valid vertex slots).
-    feat = per_voxel_features(vertex_indices, residual_features).numpy()  # (N, C)
+    feat = per_voxel_features(vertex_indices, implicit_features).numpy()  # (N, C)
 
     # Render only leaves with non-zero features. Internal nodes overlap their
     # children, so we drop them; nodes that never got a feature scatter are

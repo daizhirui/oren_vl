@@ -64,12 +64,6 @@ RUN cd /opt/build/deps/pytorch3d && \
     . ${VIRTUAL_ENV}/bin/activate && \
     pip install --no-build-isolation --verbose .
 
-COPY deps/sparse_octree /opt/build/deps/sparse_octree
-RUN cd /opt/build/deps/sparse_octree && \
-    rm -rf build || true && \
-    . ${VIRTUAL_ENV}/bin/activate && \
-    python3 setup.py install --verbose
-
 COPY deps/erl_geometry /opt/build/deps/erl_geometry
 RUN cd /opt/build/deps/erl_geometry && \
     rm -rf build || true && \

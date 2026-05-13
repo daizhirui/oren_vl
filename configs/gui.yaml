@@ -1,4 +1,4 @@
-identifier: oren.gui_base.GuiBaseConfig
+cfg_identifier: oren.gui_base.GuiBaseConfig
 
 scene_width: 1920
 scene_height: 1440

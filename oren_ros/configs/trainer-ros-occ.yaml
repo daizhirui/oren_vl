@@ -1,18 +1,17 @@
 cfg_identifier: oren.trainer_config.TrainerConfig
-trainer_identifier: oren.sdf_trainer.SdfTrainer
+trainer_identifier: oren.occ_trainer.OccTrainer   # oren.sdf_trainer.SdfTrainer | oren.occ_trainer.OccTrainer
 seed: 12345
 log_dir: logs
-exp_name: Newercollege
+exp_name: oren_ros_occ
 device: cuda
 data:
     cfg_identifier: oren.dataset.data_config.DataConfig
-    dataset_name: newer_college
+    dataset_name: ros
     dataset_args:
-        data_path: "data/newer_college"
         min_depth: 0.8
         max_depth: 40.0
     apply_bound: false   # if false, bbox crop is applied after generate_sdf_samples via valid_mask
-    bound_min:           # null -> dataset auto-derives from mesh
+    bound_min:           # null -> derived/supplied at runtime by ROS service request
     bound_max:
     start_frame: 0
     end_frame: -1
@@ -26,9 +25,9 @@ key_frame_set:
     frame_selection: multiple_max_set_coverage
     selection_window_size: 8
     frame_weight: uniform
-model_identifier: oren.sdf_network.SdfNetwork
+model_identifier: oren.occ_network.OccNetwork
 model:
-    cfg_identifier: oren.sdf_network.SdfNetworkConfig
+    cfg_identifier: oren.occ_network.OccNetworkConfig
     octree_cfg:
         cfg_identifier: oren.octree_config.OctreeConfig
         resolution: 0.7
@@ -37,42 +36,35 @@ model:
         init_voxel_num: 80000
         insertion_threshold: 3
         skip_insertion_if_exists: true # speed up a bit
-        implicit_feature_dim: 3
+        enable_sdf: false
+        enable_occupancy: false
+        enable_implicit: true
+        implicit_feature_dim: 2
         implicit_num_levels: 1
-        gradient_augmentation: true
-        independent_smallest_leaf_vertex: true
+        gradient_augmentation: false
+        independent_smallest_leaf_vertex: false
     residual_net_cfg:
         cfg_identifier: oren.residual_net.ResidualNetConfig
         mlp_activation: LeakyReLU
         hidden_dims: [32, 32]
-        output_scale: 0.1
+        normalization: ""
+        output_scale: 1.0
         output_dim: 1
         implicit_feature_dim: 1
-criterion_identifier: oren.sdf_criterion.SdfCriterion
+criterion_identifier: oren.occ_criterion.OccCriterion
 criterion:
-    cfg_identifier: oren.sdf_criterion.SdfCriterionConfig
-    boundary_loss_weight: 100
-    perturbation_loss_weight: 100
-    eikonal_loss_surface_weight: 30
-    eikonal_loss_perturbation_weight: 50
-    eikonal_loss_space_weight: 100
-    projection_loss_weight: 100
-    boundary_loss_prior_weight: 100
-    perturbation_loss_prior_weight: 100
-    eikonal_loss_surface_prior_weight: 30
-    eikonal_loss_perturbation_prior_weight: 50
-    eikonal_loss_space_prior_weight: 100
-    projection_loss_prior_weight: 100
-    boundary_loss_type: L1
-    perturbation_loss_type: L1
-    eikonal_loss_type: L1
-    projection_loss_type: L1
-    perturbation_loss_exp_penalty: 1.0
-    heat_loss_weight: 0.0
-    heat_loss_lambda: 4.0
-    sign_loss_free_weight: 0.0
-    sign_loss_occ_weight: 0.0
-    sign_loss_temperature: 100.0
+    cfg_identifier: oren.occ_criterion.OccCriterionConfig
+    surface_target: 1.0
+    surface_loss_prior_weight: 0.0
+    free_loss_prior_weight: 0.0
+    occ_loss_prior_weight: 0.0
+    surface_loss_weight: 1.0
+    free_loss_weight: 1.0
+    occ_loss_weight: 1.0
+    occ_loss_mode: bce
+    occ_loss_hinge_margin: 1.0
+    smoothness_weight: 0.0
+    smoothness_eps: 0.01
 num_init_frames: 3
 init_frame_iterations: 10
 num_iterations_per_frame: 1
@@ -90,13 +82,13 @@ sample_rays:
     sigma_s_pos: 0.48
     sigma_s_neg: 0.48
 batch_size: 204800
-lr: 0.005
-grad_method: finite_difference
+lr: 0.001
+grad_method: finite_difference   # unused for OccCriterion (needs_grad=False), kept for config compatibility
 finite_difference_eps: 0.03
 final_iterations: 0
 save_mesh: true
 mesh_resolution: 0.2
-mesh_iso_value: 0.0
+mesh_iso_value: 3.0
 clean_mesh: true
 ckpt_interval: -1
 profiling: false

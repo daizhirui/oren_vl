@@ -1,0 +1,6 @@
+geometry_msgs/Point[] points
+bool prior  # if true, query the prior-only field (e.g. sdf_prior / occ_prior); else the residual-corrected field
+bool return_grad  # if true, also return the field gradient at the query points
+---
+float32[] value  # scalar field value per point: SDF metres (SdfTrainer) or occupancy logits (OccTrainer)
+geometry_msgs/Vector3[] grad

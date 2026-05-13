@@ -2,6 +2,7 @@ import argparse
 import os
 import pathlib
 import sys
+import types
 from dataclasses import MISSING, dataclass, fields, is_dataclass
 from typing import ClassVar, Literal, Union, get_args, get_origin
 
@@ -25,12 +26,17 @@ __all__ = [
 ]
 
 
+def _is_union(tp) -> bool:
+    """True for both typing.Union[X, Y] and PEP 604 X | Y."""
+    return tp is Union or tp is types.UnionType
+
+
 @dataclass
 class ConfigABC:
     """Abstract base class for configuration dataclasses."""
 
     _registry: ClassVar[dict] = {}
-    identifier: str = None
+    cfg_identifier: str = None
 
     @staticmethod
     def get_identifier(cls):
@@ -44,7 +50,7 @@ class ConfigABC:
         ConfigABC._registry[identifier] = cls
 
     def __post_init__(self):
-        self.identifier = ".".join([self.__module__, self.__class__.__qualname__])
+        self.cfg_identifier = ".".join([self.__module__, self.__class__.__qualname__])
 
     @staticmethod
     def get(identifier: str):
@@ -65,8 +71,8 @@ class ConfigABC:
                 if value is None:
                     value = field_type()
                 assert (
-                    value.identifier is not None
-                ), f"Config object {field.name} has empty identifier. Do you forget to call super().__post_init__()?"
+                    value.cfg_identifier is not None
+                ), f"Config object {field.name} has empty cfg_identifier. Do you forget to call super().__post_init__()?"
                 yaml_dict[field.name] = value.as_dict()
             elif isinstance(value, tuple):  # convert tuple to list
                 yaml_dict[field.name] = list(value)
@@ -100,7 +106,7 @@ class ConfigABC:
         type_args = get_args(field.type)
         choices = None
 
-        if field_type is Union:
+        if _is_union(field_type):
             args = get_args(field.type)
             if type(None) in args:  # optional
                 if args[1] is type(None):
@@ -129,7 +135,7 @@ class ConfigABC:
             type_args = get_args(field_type)
             choices = None
 
-        if field_type is Union:
+        if _is_union(field_type):
             for t in type_args:
                 if t is type(None):
                     continue
@@ -142,7 +148,7 @@ class ConfigABC:
         else:
             if issubclass(field_type, ConfigABC):  # ConfigABC subclass
                 assert value is not None, f"Field {field.name} is subclass of ConfigABC but has None value."
-                return ConfigABC.get(value["identifier"]).from_dict(value)
+                return ConfigABC.get(value["cfg_identifier"]).from_dict(value)
 
             if is_dataclass(field_type):  # dataclass but not ConfigABC subclass
                 raise TypeError(
@@ -169,9 +175,6 @@ class ConfigABC:
             try:
                 return field_type(value)
             except Exception as e:
-                # import pdb
-                #
-                # pdb.set_trace()
                 raise TypeError(f"Error when converting field {field.name} to type {field.type}: {e}")
 
     @classmethod
@@ -299,7 +302,7 @@ class ConfigABC:
                     required = False  # default value is provided, so it is not required
 
                 field_type, type_args, choices = ConfigABC._get_true_field_type(field)
-                if field_type is Union:
+                if _is_union(field_type):
                     if default_value is None:
                         field_type = type_args[0]
                     else:
@@ -338,7 +341,7 @@ class ConfigABC:
                 elif field_type in (int, float):
                     self.add_argument(flag, type=field_type, default=default_value, required=required, help=help_str)
                 elif field_type == str:
-                    if field.name == "identifier":
+                    if field.name == "cfg_identifier":
                         self.add_argument(
                             flag,
                             type=str,
@@ -426,7 +429,7 @@ class ConfigABC:
                         key: str
                         key = key.replace("-", "_")
 
-                        if key.endswith(".identifier"):  # ignore commands like "--xxx.identifier"
+                        if key.endswith(".cfg_identifier"):  # ignore commands like "--xxx.cfg_identifier"
                             continue
                         ind = key.find(".")
                         if ind == -1:  # leaf attribute

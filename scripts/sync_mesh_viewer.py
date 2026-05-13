@@ -79,6 +79,8 @@ class ViewerConfig(ConfigABC):
     camera_config_file: Optional[str] = None
     window_width: int = 800
     window_height: int = 600
+    window_left_offset: int = 50  # X position of the top-left window (use to place on a specific monitor)
+    window_top_offset: int = 50   # Y position of the top-left window
     n_rows: int = 0  # 0 = auto-calculate
     n_cols: int = 0  # 0 = auto-calculate
     output_dir: str = "viewer_output"
@@ -569,8 +571,8 @@ class SynchronizedMeshViewer:
             cols = int(np.ceil(np.sqrt(num_meshes)))
             rows = int(np.ceil(num_meshes / cols))
 
-        offset_x = 50
-        offset_y = 50
+        offset_x = self.config.window_left_offset
+        offset_y = self.config.window_top_offset
 
         print(f"  Layout: {rows} rows × {cols} columns ({num_meshes} meshes)")
 

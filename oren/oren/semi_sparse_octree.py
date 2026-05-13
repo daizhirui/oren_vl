@@ -39,10 +39,11 @@ class SemiSparseOctree(SemiSparseOctreeBase):
 
         # (N, 4) [x, y, z, voxel_size], (x, y, z) is the center coordinate
 
-        self.voxels = self.sso.voxels_tensor.long().to(self.sdf_priors.device)
-        self.voxel_centers = self.sso.voxel_centers_tensor.to(self.sdf_priors.device)
-        self.vertex_indices = self.sso.vertices_tensor.to(self.sdf_priors.device)
-        self.structure = self.sso.children_tensor.to(self.sdf_priors.device)
+        device = self.voxels.device
+        self.voxels = self.sso.voxels_tensor.long().to(device)
+        self.voxel_centers = self.sso.voxel_centers_tensor.to(device)
+        self.vertex_indices = self.sso.vertices_tensor.to(device)
+        self.structure = self.sso.children_tensor.to(device)
 
         return svo_idx
 

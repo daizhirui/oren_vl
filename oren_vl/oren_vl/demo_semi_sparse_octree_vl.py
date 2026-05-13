@@ -1,5 +1,5 @@
 # pyright: reportPrivateImportUsage=none
-"""Build a SemiSparseOctree whose residual features are scattered VL features.
+"""Build a SemiSparseOctree whose implicit features are scattered VL features.
 
 This demo:
   1. Loads a VL feature bundle (written by `generate_vl_features`).
@@ -55,19 +55,19 @@ def insert_phase(
 
 @torch.no_grad()
 def scatter_phase(octree: SemiSparseOctree, dataset: VLFeaturesDataset, K_feat: torch.Tensor, device: str, mode: str):
-    """Pass 2: scatter per-pixel VL features into vertex residuals.
+    """Pass 2: scatter per-pixel VL features into vertex implicit features.
 
-    Returns (residual_features, n_touched). residual_features is sized to
+    Returns (implicit_features, n_touched). implicit_features is sized to
     octree.sso.num_vertices (which can exceed init_voxel_num — the underlying
     erl_geometry tree grows past its initial buffer, and using
-    octree.residual_features directly would index out of bounds).
+    octree.implicit_features directly would index out of bounds).
     n_touched counts vertex slots that received at least one feature
     (only meaningful for `running_average`).
     """
     n_vertices = int(octree.sso.num_vertices)
-    feat_dim = octree.residual_features.shape[1]
+    feat_dim = octree.implicit_features.shape[1]
 
-    residual = torch.zeros((n_vertices, feat_dim), dtype=torch.float32, device=device)
+    implicit = torch.zeros((n_vertices, feat_dim), dtype=torch.float32, device=device)
     if mode == "running_average":
         count = torch.zeros((n_vertices,), dtype=torch.long, device=device)
     else:
@@ -111,20 +111,20 @@ def scatter_phase(octree: SemiSparseOctree, dataset: VLFeaturesDataset, K_feat: 
             continue
 
         if mode == "overwrite":
-            residual[vertex_idx] = f
+            implicit[vertex_idx] = f
         else:
             assert count is not None
-            residual.index_add_(0, vertex_idx, f)
+            implicit.index_add_(0, vertex_idx, f)
             count.index_add_(0, vertex_idx, torch.ones_like(vertex_idx))
 
     if mode == "running_average":
         assert count is not None
         touched = count > 0
-        residual[touched] /= count[touched].unsqueeze(1).float()
-        residual[~touched].zero_()
-        return residual, int(touched.sum().item())
+        implicit[touched] /= count[touched].unsqueeze(1).float()
+        implicit[~touched].zero_()
+        return implicit, int(touched.sum().item())
     # In overwrite mode we don't track which slots were touched; return -1.
-    return residual, -1
+    return implicit, -1
 
 
 def main(cfg: DemoConfig) -> None:
@@ -144,8 +144,8 @@ def main(cfg: DemoConfig) -> None:
         insertion_threshold=cfg.insertion_threshold,
         skip_insertion_if_exists=True,
         gradient_augmentation=True,
-        residual_feature_dim=dataset.channels,
-        residual_num_levels=1,
+        implicit_feature_dim=dataset.channels,
+        implicit_num_levels=1,
         independent_smallest_leaf_vertex=False,
     )
     octree = SemiSparseOctree(octree_cfg).to(cfg.device)
@@ -159,9 +159,9 @@ def main(cfg: DemoConfig) -> None:
         f"(buffer capacity: {octree.voxels.shape[0]})."
     )
 
-    residual_features, n_touched = scatter_phase(octree, dataset, K_feat, cfg.device, cfg.scatter_mode)
+    implicit_features, n_touched = scatter_phase(octree, dataset, K_feat, cfg.device, cfg.scatter_mode)
     if cfg.scatter_mode == "running_average":
-        print(f"Vertices with VL features: {n_touched} / {residual_features.shape[0]}")
+        print(f"Vertices with VL features: {n_touched} / {implicit_features.shape[0]}")
 
     output_path = pathlib.Path(cfg.output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -175,7 +175,7 @@ def main(cfg: DemoConfig) -> None:
         "voxel_centers": octree.voxel_centers[:n_nodes].cpu(),
         "vertex_indices": octree.vertex_indices[:n_nodes].cpu(),
         "structure": octree.structure[:n_nodes].cpu(),
-        "residual_features": residual_features.cpu(),
+        "implicit_features": implicit_features.cpu(),
         "n_nodes": n_nodes,
         "n_leaves": n_leaves,
         "n_vertices": n_vertices,

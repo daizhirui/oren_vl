@@ -10,7 +10,7 @@ find_package(rosidl_default_generators REQUIRED)
 find_package(geometry_msgs REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
-  srv/QuerySdf.srv
+  srv/QueryScalarField.srv
   srv/SaveMesh.srv
   srv/SaveModel.srv
   DEPENDENCIES geometry_msgs

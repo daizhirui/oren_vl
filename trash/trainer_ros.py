@@ -7,12 +7,12 @@ import numpy as np
 from tqdm import tqdm
 
 from oren import torch
-from oren.criterion import Criterion
+from oren.sdf_criterion import SdfCriterion
 from oren.evaluator_oren import GradSdfEvaluator
 from oren.frame import Frame
 from oren.key_frame_set import KeyFrameSet
 from oren.loggers import BasicLogger
-from oren.model import SdfNetwork
+from oren.sdf_network import SdfNetwork
 from oren.trainer_config import TrainerConfig
 from oren.utils.profiling import GpuTimer
 from oren.utils.sampling import SampleResults, generate_sdf_samples
@@ -44,7 +44,7 @@ class TrainerRos:
         self.global_step = 0
         self.num_iterations = 0
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.cfg.lr)
-        self.criterion = Criterion(
+        self.criterion = SdfCriterion(
             cfg=self.cfg.criterion,
             n_stratified=self.cfg.sample_rays.n_stratified,
             n_perturbed=self.cfg.sample_rays.n_perturbed,
@@ -278,7 +278,8 @@ class TrainerRos:
                         gt_sdf_perturb=self.samples.perturbation_sdf,
                         gt_sdf_stratified=self.samples.stratified_sdf,
                         positive_perturbation_mask=self.samples.positive_perturbation_mask,
-                        perturb_eta=self.cfg.sample_rays.sigma_s,
+                        perturb_sigma_pos=self.cfg.sample_rays.sigma_s_pos,
+                        perturb_sigma_neg=self.cfg.sample_rays.sigma_s_neg,
                     )
                     loss.backward()
                     self.optimizer.step()

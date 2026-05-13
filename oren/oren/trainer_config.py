@@ -1,16 +1,20 @@
 from dataclasses import dataclass, field
 from typing import Optional
 
-from oren.criterion import CriterionConfig
+from oren.sdf_criterion import SdfCriterionConfig, SdfCriterion
+from oren.occ_criterion import OccCriterionConfig
 from oren.dataset.data_config import DataConfig
 from oren.key_frame_set import KeyFrameSetConfig
-from oren.model import SdfNetworkConfig
+from oren.sdf_network import SdfNetworkConfig, SdfNetwork
+from oren.occ_network import OccNetworkConfig
 from oren.utils.config_abc import ConfigABC
+from oren.utils.registry import get_identifier
 from oren.utils.sampling import SampleRaysConfig
 
 
 @dataclass
 class TrainerConfig(ConfigABC):
+    trainer_identifier: str = "oren.sdf_trainer.SdfTrainer"
     seed: int = 12345
     log_dir: str = "logs"
     exp_name: str = "oren"
@@ -19,8 +23,10 @@ class TrainerConfig(ConfigABC):
     bound_min: Optional[list[float]] = None
     bound_max: Optional[list[float]] = None
     key_frame_set: KeyFrameSetConfig = field(default_factory=KeyFrameSetConfig)
-    model: SdfNetworkConfig = field(default_factory=SdfNetworkConfig)
-    criterion: CriterionConfig = field(default_factory=CriterionConfig)
+    model_identifier: str = get_identifier(SdfNetwork)
+    model: SdfNetworkConfig | OccNetworkConfig = field(default_factory=SdfNetworkConfig)
+    criterion_identifier: str = get_identifier(SdfCriterion)
+    criterion: SdfCriterionConfig | OccCriterionConfig = field(default_factory=SdfCriterionConfig)
     num_init_frames: int = 3
     init_frame_iterations: int = 10
     num_iterations_per_frame: int = 1

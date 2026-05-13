@@ -13,7 +13,8 @@ from tqdm import tqdm
 from oren import torch
 from oren.frame import Frame
 from oren.gui_base import GuiBase, GuiBaseConfig, GuiControlPacket, GuiDataPacket
-from oren.trainer import Trainer, TrainerConfig
+from oren.sdf_trainer import SdfTrainer
+from oren.trainer_config import TrainerConfig
 
 
 class GuiTrainer:
@@ -21,7 +22,7 @@ class GuiTrainer:
         self.gui_cfg = gui_cfg
         self.trainer_cfg = trainer_cfg
 
-        self.trainer = Trainer(self.trainer_cfg)
+        self.trainer = SdfTrainer(self.trainer_cfg)
         self.trainer.training_iteration_end_callback = self.training_iteration_end_callback
         self.trainer.training_frame_start_callback = self.training_frame_start_callback
         self.trainer.training_end_callback = self.training_end_callback
@@ -61,7 +62,7 @@ class GuiTrainer:
         self._psutil_proc = psutil.Process()
         self._psutil_proc.cpu_percent(interval=None)
 
-    def training_iteration_end_callback(self, trainer: Trainer):
+    def training_iteration_end_callback(self, trainer: SdfTrainer):
         # send iteration results to GUI
         data_packet = GuiDataPacket()
         data_packet.time_stats = trainer.get_time_stats()
@@ -88,7 +89,7 @@ class GuiTrainer:
 
         self.reply_gui(data_packet, must_reply=True)
 
-    def training_frame_start_callback(self, trainer: Trainer, frame: Frame):
+    def training_frame_start_callback(self, trainer: SdfTrainer, frame: Frame):
         # send new frame info to GUI
         data_packet = GuiDataPacket()
         data_packet.flag_new_frame = True
@@ -106,7 +107,7 @@ class GuiTrainer:
 
         return not self.control_packet.flag_gui_closed
 
-    def training_end_callback(self, trainer: Trainer):
+    def training_end_callback(self, trainer: SdfTrainer):
         data_packet = GuiDataPacket()
         data_packet.mapping_end = True
         self.queue_to_gui.put_nowait(data_packet)
@@ -274,13 +275,13 @@ class GuiTrainer:
                 if free_mem < (1024**3):  # less than 1GB free memory
                     tqdm.write(Fore.RED + "LOW GPU MEMORY: try to empty cache" + Style.RESET_ALL)
                     torch.cuda.empty_cache()
-                results = self.trainer.evaluator.extract_sdf_grid(
+                results = self.trainer.evaluator.extract_field_grid(
                     bound_min=self.gui_cfg.scene_bound_min,
                     bound_max=self.gui_cfg.scene_bound_max,
                     grid_resolution=self.control_packet.sdf_grid_resolution,
                     grid_vertex_filter=(
                         (
-                            lambda *args: self.trainer.model.grid_vertex_filter(
+                            lambda *args: self.trainer.model.octree.grid_vertex_filter(
                                 *args,
                                 batch_size=self.trainer.evaluator.batch_size,
                                 device="cpu",

@@ -182,7 +182,7 @@ ros2 launch oren_ros mapping.launch.py \
 ```
 
 The default `trainer_config_path` resolves to the installed
-`share/oren_ros/configs/trainer-ros.yaml` — override it to point at your own
+`share/oren_ros/configs/trainer-ros-sdf.yaml` — override it to point at your own
 trainer YAML (e.g. `trainer-ros-newer-college.yaml` shipped with the package):
 
 ```bash
@@ -200,7 +200,7 @@ Launch arguments:
 | Argument | Default | Description |
 | --- | --- | --- |
 | `bag_path` | `ros2_bag` | Directory passed to `ros2 bag play`. |
-| `trainer_config_path` | `share/oren_ros/configs/trainer-ros.yaml` | Trainer YAML consumed by `mapping_node`. |
+| `trainer_config_path` | `share/oren_ros/configs/trainer-ros-sdf.yaml` | Trainer YAML consumed by `mapping_node`. |
 | `play_rate` | `1.0` | `ros2 bag play -r` rate. |
 | `bag_delay` | `1.0` | Seconds to wait before starting bag playback. |
 | `use_sim_time` | `true` | Drives every node's clock from `/clock`. |

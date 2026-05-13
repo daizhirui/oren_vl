@@ -15,6 +15,7 @@ from rclpy.signals import SignalHandlerOptions
 
 from oren.trainer_config import TrainerConfig
 from oren_ros.ros_trainer import RosTrainer
+from oren_ros.tqdm_redirect import install_ros_tqdm_redirect
 
 
 def main(args=None):
@@ -22,6 +23,7 @@ def main(args=None):
     # `Trainer.train()`'s try/finally on the main thread (where cleanup runs).
     rclpy.init(args=args, signal_handler_options=SignalHandlerOptions.NO)
     node = rclpy.create_node("oren_mapping_node")
+    install_ros_tqdm_redirect(node)
 
     executor = MultiThreadedExecutor()
     executor.add_node(node)

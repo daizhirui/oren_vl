@@ -1,6 +1,6 @@
-base_config: trainer-ros.yaml
+base_config: trainer-ros-occ.yaml
 
-exp_name: oren_ros_newer_college
+exp_name: oren_ros_newer_college_occ
 
 data:
     dataset_args:

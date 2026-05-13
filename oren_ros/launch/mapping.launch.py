@@ -36,8 +36,13 @@ def generate_launch_description():
 
     trainer_config_path_arg = DeclareLaunchArgument(
         "trainer_config_path",
-        default_value=PathJoinSubstitution([oren_ros_share, "configs", "trainer-ros.yaml"]),
+        default_value=PathJoinSubstitution([oren_ros_share, "configs", "trainer-ros-sdf.yaml"]),
         description="Trainer config YAML path.",
+    )
+    params_file_arg = DeclareLaunchArgument(
+        "params_file",
+        default_value=PathJoinSubstitution([oren_ros_share, "configs", "ros2-params.yaml"]),
+        description="ROS 2 params YAML for mapping_node and sdf_query_node.",
     )
     use_sim_time_arg = DeclareLaunchArgument(
         "use_sim_time",
@@ -77,6 +82,7 @@ def generate_launch_description():
 
     bag_path = LaunchConfiguration("bag_path")
     trainer_config_path = LaunchConfiguration("trainer_config_path")
+    params_file = LaunchConfiguration("params_file")
     play_rate = LaunchConfiguration("play_rate")
     bag_delay = LaunchConfiguration("bag_delay")
     use_sim_time = LaunchConfiguration("use_sim_time")
@@ -87,7 +93,7 @@ def generate_launch_description():
         name="oren_mapping_node",
         output="screen",
         parameters=[
-            PathJoinSubstitution([oren_ros_share, "configs", "ros2-params.yaml"]),
+            params_file,
             {"use_sim_time": use_sim_time},
             {"trainer_config_path": trainer_config_path},
         ],
@@ -99,7 +105,7 @@ def generate_launch_description():
         name="sdf_query_node",
         output="screen",
         parameters=[
-            PathJoinSubstitution([oren_ros_share, "configs", "ros2-params.yaml"]),
+            params_file,
             {"use_sim_time": use_sim_time},
         ],
         condition=IfCondition(LaunchConfiguration("visualize_sdf")),
@@ -133,6 +139,7 @@ def generate_launch_description():
         [
             bag_path_arg,
             trainer_config_path_arg,
+            params_file_arg,
             play_rate_arg,
             bag_delay_arg,
             use_sim_time_arg,
