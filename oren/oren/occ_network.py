@@ -29,7 +29,8 @@ class OccNetwork(nn.Module):
         )
         self.octree: SemiSparseOctree = SemiSparseOctree(cfg.octree_cfg)
         cfg.residual_net_cfg.implicit_feature_dim = (
-            cfg.octree_cfg.implicit_feature_dim * cfg.octree_cfg.implicit_num_levels
+            # +1 for the prior occ value concatenated in forward (mirrors SdfNetwork)
+            cfg.octree_cfg.implicit_feature_dim * cfg.octree_cfg.implicit_num_levels + 1
         )
         self.residual: ResidualNet = ResidualNet(cfg.residual_net_cfg)
 
