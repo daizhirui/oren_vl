@@ -80,7 +80,7 @@ class ViewerConfig(ConfigABC):
     window_width: int = 800
     window_height: int = 600
     window_left_offset: int = 50  # X position of the top-left window (use to place on a specific monitor)
-    window_top_offset: int = 50   # Y position of the top-left window
+    window_top_offset: int = 50  # Y position of the top-left window
     n_rows: int = 0  # 0 = auto-calculate
     n_cols: int = 0  # 0 = auto-calculate
     output_dir: str = "viewer_output"
@@ -452,9 +452,9 @@ class SynchronizedMeshViewer:
 
         # Print key points
         print("\n    Color Guide:")
-        print(f"      Blue   → Low error   (≤ {self.config.error_min + 0.25 * error_range:.4f}m)")
-        print(f"      Green  → Medium error (≈ {self.config.error_min + 0.5 * error_range:.4f}m)")
-        print(f"      Red    → High error  (≥ {self.config.error_min + 0.75 * error_range:.4f}m)")
+        print(f"      Blue    Low error   (≤ {self.config.error_min + 0.25 * error_range:.4f}m)")
+        print(f"      Green   Medium error (≈ {self.config.error_min + 0.5 * error_range:.4f}m)")
+        print(f"      Red     High error  (>= {self.config.error_min + 0.75 * error_range:.4f}m)")
         print("    " + "-" * 50)
 
     def load_camera_config(self) -> bool:
@@ -842,7 +842,7 @@ class SynchronizedMeshViewer:
             print(f"  - Enabled: Yes")
             print(f"  - Ground truth: {self.config.ground_truth_file}")
             print(f"  - Error range: [{self.config.error_min}, {self.config.error_max}] m")
-            print(f"  - Colormap: Jet (Blue → Cyan → Green → Yellow → Red)")
+            print(f"  - Colormap: Jet (Blue  Cyan  Green  Yellow  Red)")
         if self.camera_config_file:
             print("\nCamera Configuration:")
             print(f"  - Loaded from: {self.camera_config_file}")

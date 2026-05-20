@@ -9,6 +9,17 @@ from .nearest_neighbor import nearest_neighbor
 
 
 def generate_sample_mask(shape, num_samples: int):
+    """Build a boolean mask of `shape` with `num_samples` `True` entries placed at uniformly random positions.
+
+    If `num_samples >= prod(shape)`, the full all-True mask is returned without sampling.
+
+    Args:
+        shape: Sequence of integers giving the output mask shape.
+        num_samples: Number of entries to set to True.
+
+    Returns:
+        Boolean tensor of `shape` with exactly `min(num_samples, prod(shape))` True entries.
+    """
     n = reduce(lambda x, y: x * y, shape)
     if num_samples >= n:
         return torch.ones(shape, dtype=torch.bool)
@@ -58,8 +69,10 @@ class SampleResults:
     positive_sdf_mask: torch.Tensor
     negative_sdf_mask: torch.Tensor
     valid_indices: torch.Tensor
-    stratified_sdf: Optional[torch.Tensor]  # None when generate_sdf_samples(compute_sdf_labels=False)
-    perturbation_sdf: Optional[torch.Tensor]  # None when generate_sdf_samples(compute_sdf_labels=False)
+    # None when generate_sdf_samples(compute_sdf_labels=False).
+    stratified_sdf: Optional[torch.Tensor]
+    # None when generate_sdf_samples(compute_sdf_labels=False).
+    perturbation_sdf: Optional[torch.Tensor]
     n_stratified: int
     n_perturbed: int
     positive_perturbation_mask: torch.Tensor
@@ -111,9 +124,8 @@ def generate_sdf_samples(
 
     # total_samples = n_stratified + n_perturbed + 1
 
-    # Create valid mask to filter out invalid depth values (0, negative, or NaN)
-    # Valid rays must have depth in (depth_min + surface_margin, depth_max) to
-    # ensure we can sample both free space and near-surface points.
+    # Create valid mask to filter out invalid depth values (0, negative, or NaN). Valid rays must have depth in
+    # (depth_min + surface_margin, depth_max) to ensure we can sample both free space and near-surface points.
     valid_mask = (
         (depth_samples_all > depth_min + surface_margin)
         & (depth_samples_all < depth_max)
@@ -130,8 +142,7 @@ def generate_sdf_samples(
     #############################################################
     # 1. Stratified sampling (vectorized) - only for valid rays #
     #############################################################
-    # Compared with uniform sampling from [depth_min, d_max],
-    # stratified sampling ensures coverage of free space.
+    # Compared with uniform sampling from [depth_min, d_max], stratified sampling ensures coverage of free space.
 
     if n_stratified > 0:
         d_max = depth_samples_valid - surface_margin  # (num_valid_rays,)

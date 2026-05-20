@@ -96,6 +96,7 @@ def compute_sdf_ground_truth_from_pcd(
 
 
 def main():
+    """CLI entry: sample a uniform grid in `[bound_min, bound_max]` and save GT SDF, gradient, and masks."""
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--mesh-path",

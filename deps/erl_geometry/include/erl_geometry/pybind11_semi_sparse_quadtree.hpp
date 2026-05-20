@@ -62,6 +62,7 @@ BindSemiSparseQuadtree(
             "num_independent_leaf_vertices",
             &Quadtree::GetIndependentLeafVertexCount)
         .def_property_readonly("vertex_keys", &Quadtree::GetVertexKeys)
+        .def_property_readonly("buf_head", &Quadtree::GetBufHead)
         .def(
             "insert_points",
             py::overload_cast<const Matrix2X &>(&Quadtree::InsertPoints),
@@ -252,9 +253,20 @@ BindSemiSparseQuadtree(
             drawer_setting->resolution = resolution;
             drawer_setting->padding = padding;
             for (int i = 0; i < 4; ++i) {
-                drawer_setting->bg_color[i] = bg_color[i];
-                drawer_setting->fg_color[i] = fg_color[i];
-                drawer_setting->border_color[i] = border_color[i];
+                drawer_setting->bg_color[0] = bg_color[0];
+                drawer_setting->bg_color[1] = bg_color[1];
+                drawer_setting->bg_color[2] = bg_color[2];
+                drawer_setting->bg_color[3] = bg_color[3];
+
+                drawer_setting->fg_color[0] = fg_color[0];
+                drawer_setting->fg_color[1] = fg_color[1];
+                drawer_setting->fg_color[2] = fg_color[2];
+                drawer_setting->fg_color[3] = fg_color[3];
+
+                drawer_setting->border_color[0] = border_color[0];
+                drawer_setting->border_color[1] = border_color[1];
+                drawer_setting->border_color[2] = border_color[2];
+                drawer_setting->border_color[3] = border_color[3];
             }
             drawer_setting->border_thickness = border_thickness;
 

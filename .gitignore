@@ -1,3 +1,6 @@
+baseline
+*.bak
+
 iros*
 Pipfile.lock
 launch.json

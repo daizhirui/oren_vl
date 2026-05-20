@@ -57,6 +57,14 @@ class ConfigABC:
         return ConfigABC._registry[identifier]
 
     def as_dict(self) -> dict:
+        """Serialize this config to a plain dict suitable for YAML dumping.
+
+        Nested `ConfigABC` fields recurse; tuples become lists; numpy arrays and torch tensors become scalars or lists;
+        `pathlib.Path` becomes a string; `None`/`MISSING` become `None`.
+
+        Returns:
+            Dict mapping field names to JSON/YAML-compatible values.
+        """
         all_fields = fields(self)
         yaml_dict = dict()
         for field in all_fields:
@@ -179,6 +187,17 @@ class ConfigABC:
 
     @classmethod
     def from_dict(cls, yaml_dict: dict):
+        """Construct an instance of `cls` from a dict produced by `as_dict` or loaded from YAML.
+
+        Unknown keys are dropped with a warning. Nested `ConfigABC` subtrees are dispatched via `cfg_identifier`.
+
+        Args:
+            cls: The target config class (supplied by the classmethod machinery).
+            yaml_dict: Mapping of field names to values. Consumed (keys are removed) as the function runs.
+
+        Returns:
+            An instance of `cls` with fields populated from `yaml_dict`.
+        """
         all_fields = fields(cls)
         assert len(all_fields) > 0, "No fields found, did you forget to add @dataclass decorator to your class?"
         kwargs = {}
@@ -192,6 +211,11 @@ class ConfigABC:
         return cls(**kwargs)  # type: ignore
 
     def as_yaml(self, yaml_path: Union[str, pathlib.Path]):
+        """Dump this config to `yaml_path` as YAML using `ruamel.yaml` with indented formatting.
+
+        Args:
+            yaml_path: Destination file path; any existing file is overwritten.
+        """
         yaml_obj = yaml.YAML()
         yaml_obj.indent(mapping=4, sequence=6, offset=4)
         with open(yaml_path, "w") as file:
@@ -199,6 +223,17 @@ class ConfigABC:
 
     @staticmethod
     def load_yaml_file(yaml_path: Union[str, pathlib.Path]) -> dict:
+        """Load a YAML file and recursively merge it into any `base_config` referenced inside.
+
+        The `base_config` key, if present, is treated as a path (absolute or relative to `yaml_path`) to another YAML
+        file; the current file's keys override the base's keys at every nesting depth.
+
+        Args:
+            yaml_path: Path to the YAML file to load.
+
+        Returns:
+            Merged dict, or `None` if the file is empty.
+        """
 
         def update_dict(src: dict, dst: dict):
             for key, value in src.items():
@@ -221,6 +256,15 @@ class ConfigABC:
 
     @classmethod
     def from_yaml(cls, yaml_path: Union[str, pathlib.Path]):
+        """Load a YAML file (with `base_config` merging) and construct an instance of `cls`.
+
+        Args:
+            cls: The target config class (supplied by the classmethod machinery).
+            yaml_path: Path to the YAML file.
+
+        Returns:
+            An instance of `cls`; if the file is empty, returns `cls()` with all defaults.
+        """
         yaml_dict = ConfigABC.load_yaml_file(yaml_path)
         if yaml_dict is None:
             print(f"Warning: Empty config file {yaml_path}, using default values.")
@@ -229,6 +273,15 @@ class ConfigABC:
 
     class ArgumentParser(argparse.ArgumentParser):
         def __init__(self, cls, **kwargs):
+            """Build an `argparse.ArgumentParser` that auto-generates flags from the fields of `cls`.
+
+            Two extra flags are always available: `--config CONFIG_PATH` to load a YAML, and `--create-config` to write
+            a default YAML to `CONFIG_PATH` and exit.
+
+            Args:
+                cls: A `ConfigABC` subclass whose fields define the CLI flags.
+                **kwargs: Forwarded to `argparse.ArgumentParser.__init__`.
+            """
             super().__init__(**kwargs)
             self.add_argument(
                 "--config",
@@ -376,6 +429,20 @@ class ConfigABC:
                     raise TypeError(f"Unsupported type {field_type.__qualname__} for field {field.name}")
 
         def parse_known_args(self, args: list = None, namespace=None):
+            """Parse CLI args, optionally loading a YAML config and overriding it with later flags.
+
+            Handles `--config`, `--create-config`, and `--help` specially: `--create-config` writes a default YAML and
+            exits; `--help` prints the full help and exits; otherwise the parser loads the YAML (if any) and overlays
+            command-line values on top.
+
+            Args:
+                args: Argument list; defaults to `sys.argv[1:]`.
+                namespace: Optional pre-populated `argparse.Namespace` to fill in.
+
+            Returns:
+                Tuple `(config_obj, unknown)` where `config_obj` is an instance of the registered `cls` and `unknown`
+                is the list of unrecognized arg strings.
+            """
             if args is None:
                 args = list(sys.argv[1:])
             if not isinstance(args, list):
@@ -477,6 +544,14 @@ class ConfigABC:
 class MultiConfigArgumentParser(argparse.ArgumentParser):
     class CompleteHelpAction(getattr(argparse, "_HelpAction")):
         def __call__(self, parser, namespace, values, option_string=None):
+            """Print top-level help plus every sub-parser's help, then exit.
+
+            Args:
+                parser: The parent `argparse.ArgumentParser` that owns this action.
+                namespace: The current argparse namespace (unused).
+                values: The matched option values (unused).
+                option_string: The flag string that triggered this action (unused).
+            """
             parser.print_help()
             subparsers_actions = [
                 action
@@ -492,6 +567,13 @@ class MultiConfigArgumentParser(argparse.ArgumentParser):
             parser.exit()
 
     def __init__(self, config_parser_dict: dict, **kwargs):
+        """Build a top-level parser that dispatches each command to its own `ConfigABC.ArgumentParser`.
+
+        Args:
+            config_parser_dict: Mapping of command name to a kwargs dict; each kwargs dict must contain `cls`, the
+                `ConfigABC` subclass that backs that command, and may carry other `add_parser` keyword args.
+            **kwargs: Forwarded to `argparse.ArgumentParser.__init__` (with `add_help` forced to False).
+        """
         kwargs["add_help"] = False
         super().__init__(**kwargs)
         self.add_argument("--help", "-h", action=self.CompleteHelpAction, help="show this help message and exit")
@@ -510,6 +592,16 @@ class MultiConfigArgumentParser(argparse.ArgumentParser):
         self.command = None
 
     def parse_known_args(self, args=None, namespace=None):
+        """Dispatch to the selected sub-command's parser and return its `ConfigABC` instance.
+
+        Args:
+            args: Argument list; defaults to `sys.argv[1:]`.
+            namespace: Optional pre-populated namespace.
+
+        Returns:
+            Tuple `(config_or_args, unknown)`. If the chosen command is registered, the first element is an instance
+            of that command's config class; otherwise it is the raw `argparse.Namespace`.
+        """
         args, unknown = super().parse_known_args(args, namespace)
         self.command = args.command
         if self.command in self._my_subparsers_dict:

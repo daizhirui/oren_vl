@@ -17,6 +17,17 @@ class TrajBubbleVisualizer:
         bubble_color: Union[str, List[float]] = "green",
         bubble_transparency: float = 0.5,
     ):
+        """Configure rendering styles for the mesh / trajectory / bubble visualization.
+
+        Args:
+            mesh_color: vedo-compatible color spec (name or RGB list) for the background mesh.
+            mesh_opacity: Alpha in [0, 1] applied to the mesh.
+            traj_color: Color used for trajectory points and connecting line.
+            traj_point_size: Radius in pixels for trajectory point glyphs.
+            traj_line_width: Width in pixels for the trajectory polyline.
+            bubble_color: Color used for the bubble spheres.
+            bubble_transparency: Bubble transparency in [0, 1]; alpha is `1 - bubble_transparency`.
+        """
         self.mesh_color = mesh_color
         self.mesh_opacity = mesh_opacity
         self.traj_color = traj_color
@@ -30,12 +41,26 @@ class TrajBubbleVisualizer:
         self.bubble: Optional[np.ndarray] = None
 
     def load_mesh(self, mesh_path: str) -> vedo.Mesh:
-        """Load mesh from file."""
+        """Load mesh from file.
+
+        Args:
+            mesh_path: Path to a mesh file readable by `vedo.Mesh` (e.g., .ply, .obj).
+
+        Returns:
+            The loaded `vedo.Mesh`; also stored on `self.mesh`.
+        """
         self.mesh = vedo.Mesh(mesh_path)
         return self.mesh
 
     def load_traj(self, traj_path: str) -> np.ndarray:
-        """Load trajectory (n, 3) from text file."""
+        """Load trajectory (n, 3) from text file.
+
+        Args:
+            traj_path: Path to a whitespace-separated text file with one xyz row per waypoint.
+
+        Returns:
+            (n, 3) trajectory array; also stored on `self.traj`.
+        """
         traj = np.loadtxt(traj_path)
         if traj.ndim == 1:
             traj = traj.reshape(1, -1)
@@ -43,7 +68,14 @@ class TrajBubbleVisualizer:
         return self.traj
 
     def load_bubble(self, bubble_path: str) -> np.ndarray:
-        """Load bubbles (n, 4) from text file. Each row: x, y, z, radius."""
+        """Load bubbles (n, 4) from text file. Each row: x, y, z, radius.
+
+        Args:
+            bubble_path: Path to a whitespace-separated text file with rows `x y z radius`.
+
+        Returns:
+            (n, 4) bubble array; also stored on `self.bubble`.
+        """
         bubble = np.loadtxt(bubble_path)
         if bubble.ndim == 1:
             bubble = bubble.reshape(1, -1)
@@ -56,7 +88,15 @@ class TrajBubbleVisualizer:
         traj: Optional[np.ndarray] = None,
         bubble: Optional[np.ndarray] = None,
     ):
-        """Set data directly instead of loading from files."""
+        """Set data directly instead of loading from files.
+
+        Each argument is only assigned when it is not None, so callers may update individual fields independently.
+
+        Args:
+            mesh: Optional pre-loaded `vedo.Mesh` to assign to `self.mesh`.
+            traj: Optional (n, 3) trajectory array to assign to `self.traj`.
+            bubble: Optional (n, 4) bubble array (`x y z radius` rows) to assign to `self.bubble`.
+        """
         if mesh is not None:
             self.mesh = mesh
         if traj is not None:

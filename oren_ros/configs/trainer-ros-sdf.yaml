@@ -36,22 +36,27 @@ model:
         init_voxel_num: 80000
         insertion_threshold: 3   # min points to insert a voxel
         skip_insertion_if_exists: true   # speed up a bit
-        enable_sdf: true
-        enable_occupancy: false
-        init_occ_prior: 0.0
-        enable_implicit: true
-        implicit_feature_dim: 3
-        implicit_num_levels: 1
-        gradient_augmentation: true
         independent_smallest_leaf_vertex: false
-    residual_net_cfg:
-        cfg_identifier: oren.residual_net.ResidualNetConfig
-        mlp_activation: LeakyReLU
-        hidden_dims: [32, 32]
-        normalization:   # null | "LayerNorm" | "BatchNorm1d"
-        output_scale: 0.1
+    field:
+        cfg_identifier: oren.field_storage_config.FieldStorageConfig
+        name: sdf
         output_dim: 1
-        implicit_feature_dim: 1   # overwritten at runtime by octree_cfg
+        mode: hybrid
+        explicit_prior_init: 0.0
+        gradient_augmentation: true
+        implicit_feature_dim: 3
+        implicit_feature_level: 1
+        implicit_feature_aggregation: cat
+        shared_bank:
+        auxiliary_banks: []
+        implicit_net_cfg:
+            cfg_identifier: oren.implicit_net.ImplicitNetConfig
+            mlp_activation: LeakyReLU
+            hidden_dims: [32, 32]
+            normalization: # null | "LayerNorm" | "BatchNorm1d"
+            output_scale: 0.1
+            output_dim: 1
+            input_dim: 1 # overwritten at runtime by FieldStorage from the assembled head-input dim
 criterion_identifier: oren.sdf_criterion.SdfCriterion
 criterion:
     cfg_identifier: oren.sdf_criterion.SdfCriterionConfig

@@ -96,7 +96,6 @@ class OrenEvaluator(EvaluatorBase):
 
         Returns:
             dict of output tensors with keys:
-                'voxel_indices': (...,) voxel indices for the points
                 'sdf_prior': (...,) SDF prior from the octree
                 'sdf_residual': (...,) SDF residual from the residual network
                 'sdf': (...,) final SDF values (prior + residual)
@@ -109,7 +108,6 @@ class OrenEvaluator(EvaluatorBase):
         else:
             bs = int(self.batch_size * 3 * points.shape[0] / points.numel()) + 1
 
-        voxel_indices = []
         sdf_prior = []
         sdf_residual = []
         sdf_pred = []
@@ -120,11 +118,14 @@ class OrenEvaluator(EvaluatorBase):
             j = min(i + bs, points.shape[0])
             points_batch = points[i:j].to(self.device)
             points_batch.requires_grad_(auto_grad)
-            voxel_indices_batch, sdf_prior_batch, sdf_residual_batch, _ = model(points_batch, prior_only=prior_only)
-            if prior_only:
-                sdf_pred_batch = sdf_prior_batch
-            else:
-                sdf_pred_batch = sdf_prior_batch + sdf_residual_batch
+            out_batch = model(points_batch, prior_only=prior_only)
+            sdf_pred_batch = out_batch.pred.squeeze(-1)
+            sdf_prior_batch = (
+                out_batch.prior.squeeze(-1) if out_batch.prior is not None else torch.zeros_like(sdf_pred_batch)
+            )
+            sdf_residual_batch = (
+                out_batch.implicit.squeeze(-1) if out_batch.implicit is not None else torch.zeros_like(sdf_pred_batch)
+            )
 
             if get_grad:
                 if auto_grad:
@@ -136,32 +137,36 @@ class OrenEvaluator(EvaluatorBase):
                         allow_unused=True,
                     )[0]
                     sdf_prior_grad.append(sdf_prior_grad_batch.detach().cpu())
-                    if not prior_only:
-                        sdf_grad_batch = torch.autograd.grad(
-                            outputs=[sdf_pred_batch],
-                            inputs=[points_batch],
-                            grad_outputs=[torch.ones_like(sdf_pred_batch)],
-                            create_graph=True,
-                            allow_unused=True,
-                        )[0]
-                        sdf_grad.append(sdf_grad_batch.detach().cpu())
+                    sdf_grad_batch = torch.autograd.grad(
+                        outputs=[sdf_prior_batch + sdf_residual_batch],
+                        inputs=[points_batch],
+                        grad_outputs=[torch.ones_like(sdf_pred_batch)],
+                        create_graph=True,
+                        allow_unused=True,
+                    )[0]
+                    sdf_grad.append(sdf_grad_batch.detach().cpu())
                 else:
-                    sdf_grad_batch = None if prior_only else torch.empty_like(points_batch)
+                    sdf_grad_batch = torch.empty_like(points_batch)
                     sdf_prior_grad_batch = torch.empty_like(points_batch)
                     for k in range(3):
                         offset = torch.zeros((3,), device=points_batch.device)
                         offset[k] = finite_diff_eps
                         offset = offset.view(*[1] * (points_batch.ndim - 1), 3)
-                        _, sdf_prior_plus, _, sdf_plus = model(points_batch + offset, prior_only=prior_only)
-                        _, sdf_prior_minus, _, sdf_minus = model(points_batch - offset, prior_only=prior_only)
+                        out_plus = model(points_batch + offset, prior_only=prior_only)
+                        out_minus = model(points_batch - offset, prior_only=prior_only)
+                        sdf_plus = out_plus.pred.squeeze(-1)
+                        sdf_minus = out_minus.pred.squeeze(-1)
+                        sdf_prior_plus = (
+                            out_plus.prior.squeeze(-1) if out_plus.prior is not None else torch.zeros_like(sdf_plus)
+                        )
+                        sdf_prior_minus = (
+                            out_minus.prior.squeeze(-1) if out_minus.prior is not None else torch.zeros_like(sdf_minus)
+                        )
                         sdf_prior_grad_batch[..., k] = (sdf_prior_plus - sdf_prior_minus) / (2 * finite_diff_eps)
-                        if not prior_only:
-                            sdf_grad_batch[..., k] = (sdf_plus - sdf_minus) / (2 * finite_diff_eps)
+                        sdf_grad_batch[..., k] = (sdf_plus - sdf_minus) / (2 * finite_diff_eps)
                     sdf_prior_grad.append(sdf_prior_grad_batch.detach().cpu())
-                    if not prior_only:
-                        sdf_grad.append(sdf_grad_batch.detach().cpu())
+                    sdf_grad.append(sdf_grad_batch.detach().cpu())
 
-            voxel_indices.append(voxel_indices_batch.detach().cpu())
             sdf_prior.append(sdf_prior_batch.detach().cpu())
             sdf_residual.append(sdf_residual_batch.detach().cpu())
             sdf_pred.append(sdf_pred_batch.detach().cpu())
@@ -169,29 +174,21 @@ class OrenEvaluator(EvaluatorBase):
         if device is None:
             device = self.device
         if len(sdf_prior) == 1:
-            voxel_indices = voxel_indices[0].to(device)
             sdf_prior = sdf_prior[0].to(device)
             sdf_residual = sdf_residual[0].to(device)
             sdf_pred = sdf_pred[0].to(device)
             if get_grad:
                 sdf_prior_grad = sdf_prior_grad[0].to(device)
-                if prior_only:
-                    sdf_grad = None
-                else:
-                    sdf_grad = sdf_grad[0].to(device)
+                sdf_grad = sdf_grad[0].to(device)
         else:
-            voxel_indices = torch.cat(voxel_indices, dim=0).to(device)
             sdf_prior = torch.cat(sdf_prior, dim=0).to(device)
             sdf_residual = torch.cat(sdf_residual, dim=0).to(device)
             sdf_pred = torch.cat(sdf_pred, dim=0).to(device)
             if get_grad:
                 sdf_prior_grad = torch.cat(sdf_prior_grad, dim=0).to(device)
-                if prior_only:
-                    sdf_grad = None
-                else:
-                    sdf_grad = torch.cat(sdf_grad, dim=0).to(device)
+                sdf_grad = torch.cat(sdf_grad, dim=0).to(device)
 
-        result = dict(voxel_indices=voxel_indices, sdf_prior=sdf_prior, sdf_residual=sdf_residual, sdf=sdf_pred)
+        result = dict(sdf_prior=sdf_prior, sdf_residual=sdf_residual, sdf=sdf_pred)
         if get_grad:
             result["grad"] = dict(sdf_prior=sdf_prior_grad, sdf=sdf_grad)
         return result
@@ -206,6 +203,20 @@ class OrenEvaluator(EvaluatorBase):
         iso_value: float = 0.0,
         grid_vertex_filter: Optional[Callable[[torch.Tensor], torch.Tensor]] = None,
     ):
+        """Extract one mesh per SDF field via marching cubes, defaulting to `["sdf_prior", "sdf"]`.
+
+        Args:
+            bound_min: (3,) lower corner of the extraction grid in world coordinates.
+            bound_max: (3,) upper corner of the extraction grid in world coordinates.
+            grid_resolution: spacing of the extraction grid.
+            fields: list of SDF fields to extract; defaults to `["sdf_prior", "sdf"]` when None.
+            iso_value: iso-value for marching cubes.
+            grid_vertex_filter: optional callable mapping (N, 3) points to a boolean keep-mask; defaults to the
+                octree's `grid_vertex_filter` when `clean_mesh` is True.
+
+        Returns:
+            List of `o3d.geometry.TriangleMesh`, one per entry in `fields`.
+        """
         if self.clean_mesh and grid_vertex_filter is None:
             grid_vertex_filter = self.model.octree.grid_vertex_filter
 
@@ -223,6 +234,7 @@ class OrenEvaluator(EvaluatorBase):
 
 
 def main():
+    """CLI entry point: extract grids / meshes and compute SDF / mesh metrics for a trained OREN model."""
     import argparse
 
     from oren.trainer_config import TrainerConfig

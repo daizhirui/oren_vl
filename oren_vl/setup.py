@@ -4,7 +4,7 @@ package_name = "oren_vl"
 
 setup(
     name=package_name,
-    version="0.1.0",
+    version="0.2.0",
     author="Zhirui Dai",
     author_email="zhdai@ucsd.edu",
     description="Vision-language extension for OREN.",

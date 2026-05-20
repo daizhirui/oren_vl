@@ -1,7 +1,9 @@
-from typing import Optional
+from typing import Any, Callable, Optional
 
 import torch
 from torch.nn.utils.rnn import pad_sequence
+
+from oren.frame import Frame
 
 
 def multiple_max_set_coverage(
@@ -16,13 +18,12 @@ def multiple_max_set_coverage(
     """
     Overwrite all voxels contained in the keyframe multiple times
 
-    Note that there is a related implementation outside of this function.
-    In the insert_keyframe class method in mapping, The function is to add the new voxels contained
-    in each newly added key frame to the set of unoptimized voxels.
-    Cover all the voxels contained in the key frame multiple times
+    Note that there is a related implementation outside of this function. In the insert_keyframe class method in
+    mapping, The function is to add the new voxels contained in each newly added key frame to the set of unoptimized
+    voxels. Cover all the voxels contained in the key frame multiple times.
     Args:
         kf_seen_voxel_num (list): This is a list, each element is the number of the corresponding voxels contained in
-                                  the keyframe in key_frames.
+                                    the keyframe in key_frames.
         kf_voxel_indices (list): indices of voxels contained in each keyframe.
         kf_unoptimized_voxels (tensor, N + 1): mask of all unoptimized voxels, N=max number of voxels.
         kf_all_voxels (tensor, N + 1): mask of all voxels to be optimized.
@@ -72,9 +73,56 @@ def multiple_max_set_coverage(
 
         if not kf_unoptimized_voxels.any():  # If all are optimized
 
-            # Unoptimized voxels = all voxels that need to be optimized - \
-            # voxels seen by the latest selected key frame.
+            # Unoptimized voxels = all voxels that need to be optimized - voxels seen by the latest selected key frame.
             kf_unoptimized_voxels[...] = kf_all_voxels
             kf_unoptimized_voxels.index_fill_(0, voxel_indices, False)
 
     return selected_frame_indices, kf_unoptimized_voxels, kf_all_voxels
+
+
+def _default_collate_fn(batch) -> Any:
+    assert batch, "Batch is empty"
+    if isinstance(batch[0], torch.Tensor):
+        return torch.cat(batch, dim=0)
+    elif isinstance(batch[0], (list, tuple)):
+        transposed = list(zip(*batch))
+        # Preserve container type: tuple -> tuple, list -> list, so callers that unpack a fixed-arity
+        # tuple from the per-frame fn keep the same shape on the collated side.
+        return type(batch[0])(_default_collate_fn(samples) for samples in transposed)
+    elif isinstance(batch[0], dict):
+        collated_dict = {}
+        for key in batch[0].keys():
+            collated_dict[key] = _default_collate_fn([d[key] for d in batch])
+        return collated_dict
+    else:
+        raise TypeError(f"Unsupported data type in batch: {type(batch[0])}")
+
+
+def sample_from_frames(
+    frames: list[Frame],
+    sample_frame_fn: Callable[[Frame, int], Any],
+    sample_frame_fn_kwargs: dict | list[dict] | None = None,
+    collate_fn: Callable | None = None,
+) -> Any:
+    """Sample from the frames using the provided sampling function
+    and collate the results using the provided collate function.
+
+    Args:
+        frames: list of frames to sample from.
+        sample_frame_fn: function that takes a frame and number of samples, and returns sampled data from the frame.
+        sample_frame_fn_kwargs: keyword arguments to pass to the sample_frame_fn.
+        collate_fn: function that takes a list of sampled data from each frame and collates them into tensor(s).
+    Returns:
+        Collated tensor(s) containing the sampled data from all frames.
+    """
+    if not frames:
+        return None
+    if collate_fn is None:
+        collate_fn = _default_collate_fn
+    if sample_frame_fn_kwargs is None:
+        sample_frame_fn_kwargs = [{}] * len(frames)
+    elif isinstance(sample_frame_fn_kwargs, dict):
+        sample_frame_fn_kwargs = [sample_frame_fn_kwargs] * len(frames)
+    assert len(sample_frame_fn_kwargs) == len(frames), "Length of sample_frame_fn_kwargs must match length of frames"
+    sampled_data = [sample_frame_fn(frame, **kwargs) for frame, kwargs in zip(frames, sample_frame_fn_kwargs)]
+    return collate_fn(sampled_data)

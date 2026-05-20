@@ -1,4 +1,4 @@
-base_config: ../trainer-replica.yaml
+base_config: ../trainer-replica-sdf.yaml
 exp_name: replica/room1
 data:
     dataset_args:

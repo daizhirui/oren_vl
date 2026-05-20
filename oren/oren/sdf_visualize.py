@@ -21,6 +21,15 @@ def compute_bound(mesh: trimesh.Trimesh) -> tuple[np.ndarray, np.ndarray]:
 
 
 def calculate_gt_sdf(mesh: trimesh.Trimesh, grid_points: np.ndarray) -> np.ndarray:
+    """Compute ground-truth SDF values from a mesh at the given grid points.
+
+    Args:
+        mesh: input mesh whose surface defines the zero-level set.
+        grid_points: (..., 3) array of query points.
+
+    Returns:
+        (...,) SDF values with positive sign outside the mesh.
+    """
     f = SDF(mesh.vertices, mesh.faces)
     grid_points_flat = grid_points.reshape(-1, 3)
     gt_sdf = -f(grid_points_flat)
@@ -35,6 +44,22 @@ def get_slice_points(
     slice_axis: str = "z",
     slice_index: int | None = None,
 ):
+    """Build a 2D grid of query points lying on an axis-aligned slice of the 3D bounding box.
+
+    Args:
+        bound_min: (3,) lower corner of the 3D bounding box.
+        bound_max: (3,) upper corner of the 3D bounding box.
+        grid_resolution: spacing between grid samples along each axis.
+        slice_axis: "x", "y", or "z" -- the axis to slice along.
+        slice_index: index along `slice_axis`; if None, defaults to the middle slice.
+
+    Returns:
+        grid_points: (H, W, 3) array of points on the slice.
+        pos: float coordinate of the slice along `slice_axis`.
+        extent: [x_min, x_max, y_min, y_max] suitable for `imshow(..., extent=...)`.
+        x_label: label of the horizontal in-plane axis.
+        y_label: label of the vertical in-plane axis.
+    """
     axis_map = {"x": 0, "y": 1, "z": 2}
     if slice_axis not in axis_map:
         raise ValueError(f"slice_axis must be one of {list(axis_map)}, got {slice_axis}")
@@ -86,6 +111,17 @@ def visualize_slice(
     y_label: str,
     title_prefix: str,
 ):
+    """Display a 2D slice as a heatmap using matplotlib.
+
+    Args:
+        data: (H, W) values to render with `imshow`.
+        extent: [x_min, x_max, y_min, y_max] axes extent.
+        slice_axis: axis label ("x", "y", or "z") used in the title.
+        pos: coordinate of the slice along `slice_axis`, shown in the title.
+        x_label: label for the horizontal axis.
+        y_label: label for the vertical axis.
+        title_prefix: prefix prepended to the title (and used as the colorbar label).
+    """
     fig, ax = plt.subplots(figsize=(6, 5))
     img = ax.imshow(
         data,
@@ -102,6 +138,7 @@ def visualize_slice(
 
 
 def main():
+    """CLI entry point: load a trained SDF model and visualize slices against ground-truth SDF."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--gt-mesh-path", type=str, required=True)
     parser.add_argument("--model-path", type=str, required=True)

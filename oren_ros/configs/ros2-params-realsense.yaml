@@ -38,9 +38,11 @@
         # (depth_img / odom / depth_img_pose all pause together), so the timeout
         # must exceed that or the trainer shuts down prematurely. 10 s gives a
         # safe margin and still triggers graceful end-of-stream shutdown.
-        no_data_timeout_sec: 15.0
+        no_data_timeout_sec: 10.0
         frame_queue_maxsize: 100
         idle_block_sec: 0.0
+        publish_pointcloud: false        # whether to publish the current pointcloud in world frame as a ROS topic for visualization
+        track_bound: false               # whether to track the boundary of observed points and print it to log
 
         # --- Topic configuration ---
         depth_topic:
@@ -48,7 +50,7 @@
             qos_preset: ""
             qos_history: keep_last
             qos_depth: 1                # bag publisher advertises depth=1
-            qos_reliability: best_effort
+            qos_reliability: reliable   # TODO: best_effort is slower
             qos_durability: volatile
 
         odom_topic:
@@ -56,7 +58,7 @@
             qos_preset: ""
             qos_history: keep_last
             qos_depth: 1                # bag publisher advertises depth=1
-            qos_reliability: best_effort
+            qos_reliability: reliable   # TODO: best_effort is slower
             qos_durability: volatile
 
         # lidar_topic intentionally omitted (modality=depth).

@@ -34,23 +34,28 @@ from oren_msgs.srv import QueryScalarField, SaveMesh, SaveModel
 from oren_ros.ros_dataloader import RosDataLoader
 
 
-Trainer = SdfTrainer | OccTrainer
-
-
 class RosTrainer:
     def __init__(self, trainer_cfg: TrainerConfig, ros_node: Node):
+        """Build the trainer, attach training-loop callbacks, and register the query/save ROS services.
+
+        Args:
+            trainer_cfg: Fully-populated trainer config (used to pick the trainer class and data-loader kwargs).
+            ros_node: rclpy node that owns the service callback groups and emits log messages.
+        """
         self.ros_node = ros_node
 
         # Build the data loader directly so cfg.data.dataset_args never holds a Node.
         loader = RosDataLoader(ros_node=ros_node, **trainer_cfg.data.dataset_args)
-        self.trainer: Trainer = get_trainer(trainer_cfg.trainer_identifier)(trainer_cfg, data_stream=loader)
+        self.trainer: SdfTrainer | OccTrainer = get_trainer(trainer_cfg.trainer_identifier)(
+            trainer_cfg, data_stream=loader
+        )
 
         # Field name for the query_scalar_field service response; "sdf" or "occ".
         self._field = self.trainer.model.field_prefix
         self._query_fn = getattr(self.trainer, f"query_{self._field}")
 
         # Service request queue + shutdown signal.
-        self._service_queue: queue.Queue[tuple[Callable[[Trainer], object], Future]] = queue.Queue()
+        self._service_queue: queue.Queue[tuple[Callable[[SdfTrainer | OccTrainer], object], Future]] = queue.Queue()
         self._shutdown = threading.Event()
 
         # Trainer callbacks (run on the main / training thread).
@@ -75,6 +80,7 @@ class RosTrainer:
     # ---------------------- main entry point ----------------------------------
 
     def run(self) -> None:
+        """Run ``Trainer.train`` on the main thread, signaling shutdown to subscribers on ``KeyboardInterrupt``."""
         try:
             self.trainer.train()
         except KeyboardInterrupt:
@@ -87,7 +93,7 @@ class RosTrainer:
 
     # ---------------------- callbacks (main thread) ---------------------------
 
-    def _drain_services(self, trainer: Trainer) -> None:
+    def _drain_services(self, trainer: SdfTrainer | OccTrainer) -> None:
         while True:
             try:
                 fn, fut = self._service_queue.get_nowait()
@@ -98,12 +104,12 @@ class RosTrainer:
             except Exception as e:  # noqa: BLE001 — propagate to the service caller
                 fut.set_exception(e)
 
-    def _on_frame_start(self, trainer: Trainer, frame: Frame) -> bool:
+    def _on_frame_start(self, trainer: SdfTrainer | OccTrainer, frame: Frame) -> bool:
         return not self._shutdown.is_set()
 
     # ---------------------- service plumbing (executor thread) ----------------
 
-    def _submit(self, fn: Callable[[Trainer], object], timeout: float = 60.0):
+    def _submit(self, fn: Callable[[SdfTrainer | OccTrainer], object], timeout: float = 60.0):
         fut: Future = Future()
         self._service_queue.put((fn, fut))
         return fut.result(timeout=timeout)

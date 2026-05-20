@@ -1065,8 +1065,36 @@ phase 4.
     `FieldBank.forward(geom)` reuses the same memoized levels. Per-child
     criteria, summed loss with per-field weights, one optimizer over
     `bank.parameters()`, log-dict merging with `<field_name>/` prefix.
-    First joint workflow: SDF (hybrid) + scattered VL (explicit) on a
-    shared octree.
+
+    First joint workflow: **SDF (hybrid) + OCC (implicit) on a shared
+    `FeatureBank "geo"`** — the configuration drawn out in "Worked example:
+    shared-feature SDF + OCC" above. Picking SDF+OCC over SDF+VL for the
+    first joint workflow because:
+
+    - Both fields are scalar (`D == 1`) and already have working
+      per-field trainers / criteria from phases 2 and 3, so the only new
+      surface is the composition logic in `MultiFieldTrainer` itself.
+    - Both already train on the Replica/Newer-College datasets — no new
+      data plumbing (CLIP features, VL targets) is needed to validate
+      the joint path.
+    - The pre-refactor baselines collected at
+      `baseline/pre-fieldstorage-refactor/{sdf,occ}/` give a natural
+      sanity check: each child trainer's standalone output (when the
+      bank is configured with per-field-weight 1 on one side and 0 on
+      the other) must match the corresponding baseline, isolating
+      "bank/multi-trainer scaffolding" bugs from "joint-training
+      dynamics" bugs.
+    - The shared `geo` bank is exactly the coupling the rest of the
+      design is built around; getting it right here exercises every
+      moving piece of `FieldBank` (shared banks, per-field weights,
+      shared optimizer) without bringing in a new modality.
+
+    VL joint workflows (SDF + VL with auxiliary geometry, the distilled
+    multi-teacher VL examples) remain documented in the "Worked example"
+    sections above as architectural illustrations of what the aux-bank
+    API can express, but are **out of scope for this implementation
+    plan**. Revisit after SDF + OCC has landed and the trainer
+    composition surface is stable.
 22. Delete the deprecated flags from `OctreeConfig` (`enable_sdf`,
     `enable_occupancy`, `enable_implicit`, `init_occ_prior`,
     `implicit_feature_dim`, `implicit_num_levels`, `gradient_augmentation`).

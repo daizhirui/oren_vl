@@ -38,16 +38,25 @@ model:
         independent_smallest_leaf_vertex: false
         insertion_threshold: 3
         skip_insertion_if_exists: true # speed up a bit
-        implicit_feature_dim: 3
-        implicit_num_levels: 1
-        gradient_augmentation: true
-    residual_net_cfg:
-        cfg_identifier: oren.residual_net.ResidualNetConfig
-        mlp_activation: LeakyReLU
-        hidden_dims: [32, 32]
-        output_scale: 0.1
+    field:
+        cfg_identifier: oren.field_storage_config.FieldStorageConfig
+        name: sdf
         output_dim: 1
-        implicit_feature_dim: 1 # will be overwritten by octree_cfg implicit_feature_dim * implicit_num_levels
+        mode: hybrid
+        explicit_prior_init: 0.0
+        gradient_augmentation: true
+        implicit_feature_dim: 3
+        implicit_feature_level: 1
+        implicit_feature_aggregation: cat
+        shared_bank:
+        auxiliary_banks: []
+        implicit_net_cfg:
+            cfg_identifier: oren.implicit_net.ImplicitNetConfig
+            mlp_activation: LeakyReLU
+            hidden_dims: [32, 32]
+            output_scale: 0.1
+            output_dim: 1
+            input_dim: 1 # overwritten at runtime by FieldStorage from the assembled head-input dim
 criterion_identifier: oren.sdf_criterion.SdfCriterion
 criterion:
     cfg_identifier: oren.sdf_criterion.SdfCriterionConfig
@@ -87,8 +96,8 @@ sample_rays:
     depth_min: 0.1
     depth_max: 10.0
     surface_margin: 0.09
-    sigma_s_pos: 0.02
-    sigma_s_neg: 0.02
+    sigma_s_pos: 0.03
+    sigma_s_neg: 0.03
 batch_size: 204800
 lr: 0.005
 grad_method: finite_difference

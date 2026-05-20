@@ -5,8 +5,6 @@ ROS-side parameters (topics, modality, sync) are passed via launch args
 `parameters=[...]` list below.
 """
 
-from pathlib import Path
-
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, ExecuteProcess, LogInfo, OpaqueFunction, TimerAction
@@ -32,6 +30,11 @@ def _rviz_action(context, *args, **kwargs):
 
 
 def generate_launch_description():
+    """Build the launch description containing the clock, mapping, sdf-query, RViz, and bag-play actions.
+
+    Returns:
+        LaunchDescription with all declared launch arguments and node/process actions.
+    """
     oren_ros_share = get_package_share_directory("oren_ros")
 
     trainer_config_path_arg = DeclareLaunchArgument(

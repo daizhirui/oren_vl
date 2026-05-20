@@ -5,6 +5,7 @@ from oren.dataset.replica import compute_bound
 
 
 def main():
+    """CLI entry: print computed scene bounds for every standard Replica scene under `--data-path`."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-path", type=str, required=True, help="Path to the Replica dataset")
     parser.add_argument(

@@ -1,64 +1,64 @@
 batch_size: 204800
 bound_max:
-- 3.0999999046325684
-- 2.5999999046325684
-- 2.3999998569488525
+  - 3.0999999046325684
+  - 2.5999999046325684
+  - 2.3999998569488525
 bound_min:
-- -3.0999999046325684
-- -2.5999999046325684
-- -0.10000000149011612
+  - -3.0999999046325684
+  - -2.5999999046325684
+  - -0.10000000149011612
 cfg_identifier: oren.trainer_config.TrainerConfig
 ckpt_interval: -1
 clean_mesh: true
 criterion:
-  boundary_loss_prior_weight: 100.0
-  boundary_loss_type: L1
-  boundary_loss_weight: 100.0
-  cfg_identifier: oren.sdf_criterion.SdfCriterionConfig
-  eikonal_loss_perturbation_prior_weight: 50.0
-  eikonal_loss_perturbation_weight: 50.0
-  eikonal_loss_space_prior_weight: 100.0
-  eikonal_loss_space_weight: 100.0
-  eikonal_loss_surface_prior_weight: 30.0
-  eikonal_loss_surface_weight: 30.0
-  eikonal_loss_type: L1
-  heat_loss_lambda: 4.0
-  heat_loss_weight: 0.0
-  perturbation_loss_exp_penalty: 1.0
-  perturbation_loss_prior_weight: 500.0
-  perturbation_loss_type: L1
-  perturbation_loss_weight: 500.0
-  projection_loss_prior_weight: 100.0
-  projection_loss_type: L1
-  projection_loss_weight: 100.0
-  sign_loss_free_weight: 0.0
-  sign_loss_occ_weight: 0.0
-  sign_loss_temperature: 100.0
+    boundary_loss_prior_weight: 100.0
+    boundary_loss_type: L1
+    boundary_loss_weight: 100.0
+    cfg_identifier: oren.sdf_criterion.SdfCriterionConfig
+    eikonal_loss_perturbation_prior_weight: 50.0
+    eikonal_loss_perturbation_weight: 50.0
+    eikonal_loss_space_prior_weight: 100.0
+    eikonal_loss_space_weight: 100.0
+    eikonal_loss_surface_prior_weight: 30.0
+    eikonal_loss_surface_weight: 30.0
+    eikonal_loss_type: L1
+    heat_loss_lambda: 4.0
+    heat_loss_weight: 0.0
+    perturbation_loss_exp_penalty: 1.0
+    perturbation_loss_prior_weight: 500.0
+    perturbation_loss_type: L1
+    perturbation_loss_weight: 500.0
+    projection_loss_prior_weight: 100.0
+    projection_loss_type: L1
+    projection_loss_weight: 100.0
+    sign_loss_free_weight: 0.0
+    sign_loss_occ_weight: 0.0
+    sign_loss_temperature: 100.0
 criterion_identifier: oren.sdf_criterion.SdfCriterion
 data:
-  apply_bound: false
-  bound_max: &id001
-  - 3.0
-  - 2.5
-  - 2.3
-  bound_min: &id002
-  - -3.0
-  - -2.5
-  - 0.0
-  cfg_identifier: oren.dataset.data_config.DataConfig
-  dataset_args:
     apply_bound: false
-    bound_max: *id001
-    bound_min: *id002
-    intrinsics_cx: 429.2593078613281
-    intrinsics_cy: 243.30862426757812
-    intrinsics_fx: 429.47845458984375
-    intrinsics_fy: 429.47845458984375
-    max_depth: 4.0
-    min_depth: 0.3
-  dataset_name: ros
-  end_frame: -1
-  start_frame: 0
+    bound_max: &id001
+      - 3.0
+      - 2.5
+      - 2.3
+    bound_min: &id002
+      - -3.0
+      - -2.5
+      - 0.0
+    cfg_identifier: oren.dataset.data_config.DataConfig
+    dataset_args:
+        apply_bound: false
+        bound_max: *id001
+        bound_min: *id002
+        intrinsics_cx: 429.2593078613281
+        intrinsics_cy: 243.30862426757812
+        intrinsics_fx: 429.47845458984375
+        intrinsics_fy: 429.47845458984375
+        max_depth: 4.0
+        min_depth: 0.3
+    dataset_name: ros
+    end_frame: -1
+    start_frame: 0
 device: cuda
 exp_name: oren_ros_realsense_sdf
 extra_surface_sample: false
@@ -67,49 +67,54 @@ final_iterations: 0
 final_save_model: true
 finite_difference_eps: 0.025
 frame_downsample: 10
-frozen_model_path: null
+frozen_model_path:
 grad_method: finite_difference
 init_frame_iterations: 10
 key_frame_set:
-  cfg_identifier: oren.key_frame_set.KeyFrameSetConfig
-  frame_selection: multiple_max_set_coverage
-  frame_weight: uniform
-  insert_interval: 50
-  insert_method: intersection
-  insert_ratio: 0.7
-  selection_window_size: 16
+    cfg_identifier: oren.key_frame_set.KeyFrameSetConfig
+    frame_selection: multiple_max_set_coverage
+    frame_weight: uniform
+    insert_interval: 50
+    insert_method: intersection
+    insert_ratio: 0.7
+    selection_window_size: 16
 log_dir: logs
 lr: 0.005
 mesh_iso_value: 0.0
 mesh_resolution: 0.03
 model:
-  cfg_identifier: oren.sdf_network.SdfNetworkConfig
-  octree_cfg:
-    cfg_identifier: oren.octree_config.OctreeConfig
-    enable_implicit: true
-    enable_occupancy: false
-    enable_sdf: true
-    gradient_augmentation: true
-    implicit_feature_dim: 2
-    implicit_num_levels: 1
-    independent_smallest_leaf_vertex: false
-    init_occ_prior: 0.0
-    init_voxel_num: 400000
-    insertion_threshold: 8
-    resolution: 0.2
-    semi_sparse_depth: 4
-    skip_insertion_if_exists: true
-    tree_depth: 7
-  residual_net_cfg:
-    cfg_identifier: oren.residual_net.ResidualNetConfig
-    hidden_dims:
-    - 32
-    - 32
-    implicit_feature_dim: 3
-    mlp_activation: LeakyReLU
-    normalization: null
-    output_dim: 1
-    output_scale: 0.1
+    cfg_identifier: oren.sdf_network.SdfNetworkConfig
+    octree_cfg:
+        cfg_identifier: oren.octree_config.OctreeConfig
+        independent_smallest_leaf_vertex: false
+        init_voxel_num: 400000
+        insertion_threshold: 8
+        resolution: 0.2
+        semi_sparse_depth: 4
+        skip_insertion_if_exists: true
+        tree_depth: 7
+    field:
+        cfg_identifier: oren.field_storage_config.FieldStorageConfig
+        name: sdf
+        output_dim: 1
+        mode: hybrid
+        explicit_prior_init: 0.0
+        gradient_augmentation: true
+        implicit_feature_dim: 2
+        implicit_feature_level: 1
+        implicit_feature_aggregation: cat
+        shared_bank:
+        auxiliary_banks: []
+        implicit_net_cfg:
+            cfg_identifier: oren.implicit_net.ImplicitNetConfig
+            hidden_dims:
+              - 32
+              - 32
+            input_dim: 3
+            mlp_activation: LeakyReLU
+            normalization:
+            output_dim: 1
+            output_scale: 0.1
 model_identifier: oren.sdf_network.SdfNetwork
 num_init_frames: 2
 num_iterations_per_frame: 1
@@ -117,17 +122,17 @@ num_rays_total: 10240
 profiling: false
 profiling_verbose: false
 sample_rays:
-  cfg_identifier: oren.utils.sampling.SampleRaysConfig
-  depth_max: 4.0
-  depth_min: 0.3
-  n_perturbed_neg: 1
-  n_perturbed_pos: 1
-  n_stratified: 1
-  sigma_s_neg: 0.04
-  sigma_s_pos: 0.03
-  surface_margin: 0.15
+    cfg_identifier: oren.utils.sampling.SampleRaysConfig
+    depth_max: 4.0
+    depth_min: 0.3
+    n_perturbed_neg: 1
+    n_perturbed_pos: 1
+    n_stratified: 1
+    sigma_s_neg: 0.04
+    sigma_s_pos: 0.03
+    surface_margin: 0.15
 save_mesh: true
 save_slice: true
 seed: 12345
-slice_center: null
+slice_center:
 trainer_identifier: oren.sdf_trainer.SdfTrainer

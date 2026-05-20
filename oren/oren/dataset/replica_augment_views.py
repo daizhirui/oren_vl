@@ -29,6 +29,14 @@ def load_traj(traj_path: str) -> np.ndarray:
 
 class MeshVisualizer:
     def __init__(self, mesh_path: str, cam_intrinsics: dict, img_width: int = 1200, img_height: int = 680):
+        """Open a hidden Open3D visualizer that renders `mesh_path` from arbitrary camera poses.
+
+        Args:
+            mesh_path: path to the triangle mesh (PLY) to render.
+            cam_intrinsics: dict with keys `fx`, `fy`, `cx`, `cy`, `scale` describing the pinhole camera.
+            img_width: render width in pixels.
+            img_height: render height in pixels.
+        """
         self.mesh_path = mesh_path
         self.cam_intrinsics = cam_intrinsics
         self.img_width = img_width
@@ -44,6 +52,11 @@ class MeshVisualizer:
         self.view_control = self.vis.get_view_control()
 
     def set_camera(self, camera_pose: np.ndarray):
+        """Configure the Open3D view control with the given camera pose and current intrinsics.
+
+        Args:
+            camera_pose: (4, 4) camera-to-world pose; the inverse is supplied to Open3D as the extrinsic.
+        """
         camera_parameters = o3d.camera.PinholeCameraParameters()
         camera_parameters.extrinsic = np.linalg.inv(camera_pose).astype(np.float64)
         intrinsic_matrix = np.array(
@@ -63,6 +76,12 @@ class MeshVisualizer:
         ), f"warning: failed to set image size {self.img_width}x{self.img_height}"
 
     def render(self):
+        """Render the mesh from the currently-set camera pose and return depth + RGB buffers.
+
+        Returns:
+            depth_array: (H, W) float depth in meters.
+            rgb_array: (H, W, 3) float RGB in [0, 1].
+        """
         self.vis.poll_events()
         self.vis.update_renderer()
         rgb_buffer = self.vis.capture_screen_float_buffer(do_render=True)
@@ -101,8 +120,8 @@ def add_frames(
         original_dir: original directory of the dataset
         output_dir: output directory to save modified trajectory and images
         insert_interval: insertion interval, default is to insert an upward-looking frame every 10 frames
-        n_rolls_per_insertion: number of rolls per insertion, default is 1 (add the upward-looking frame only). If greater
-            than 1, will add additional frames with rolls by 360/n_rolls_per_insert degrees after the frame.
+        n_rolls_per_insertion: number of rolls per insertion, default is 1 (add the upward-looking frame only). If
+            greater than 1, will add additional frames with rolls by 360/n_rolls_per_insert degrees after the frame.
         max_roll_of_insertion: maximum roll angle for the inserted frames
         ignore_existing: whether to ignore existing frames
     """
@@ -208,8 +227,8 @@ def process_all_replica_scenes(
         base_dir: base directory of the Replica dataset
         output_dir: output directory to save processed scenes
         interval: insertion interval, insert an upward-looking frame every n frames
-        n_rolls_per_insertion: number of rolls per insertion, default is 1 (add the upward-looking frame only). If greater
-            than 1, will add additional frames with rolls by 360/n_rolls_per_insert degrees after the frame.
+        n_rolls_per_insertion: number of rolls per insertion, default is 1 (add the upward-looking frame only). If
+            greater than 1, will add additional frames with rolls by 360/n_rolls_per_insert degrees after the frame.
         max_roll_of_insertion: maximum roll angle for the inserted frames.
         ignore_existing: whether to ignore existing frames
         scenes: list of scene names to process; if None, process all default scenes
@@ -233,6 +252,7 @@ def process_all_replica_scenes(
 
 
 def main():
+    """CLI entry: augment a Replica dataset by inserting upward-looking and pitched views into each scene."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--original-dir", type=str, required=True, help="Path to the original dataset directory")
     parser.add_argument("--output-dir", type=str, required=True, help="Path to the output dataset directory")

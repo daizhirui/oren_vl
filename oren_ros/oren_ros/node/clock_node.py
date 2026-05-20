@@ -15,6 +15,7 @@ from tf2_msgs.msg import TFMessage
 class ClockNode(Node):
 
     def __init__(self):
+        """Declare parameters, validate them, and either start the clock timer or wait for the first /tf message."""
         super().__init__("clock_node")
 
         self.declare_parameter("clock_rate", 100.0)
@@ -82,6 +83,11 @@ class ClockNode(Node):
 
 
 def main(args=None):
+    """Spin a ClockNode until shutdown.
+
+    Args:
+        args: Optional CLI argument list forwarded to ``rclpy.init``.
+    """
     rclpy.init(args=args)
     node = ClockNode()
     try:

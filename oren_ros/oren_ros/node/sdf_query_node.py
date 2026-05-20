@@ -22,6 +22,7 @@ from oren_msgs.srv import QueryScalarField
 class SdfQueryNode(Node):
 
     def __init__(self):
+        """Declare params, build the query grid, set up publishers/timer, and connect to the SDF query service."""
         super().__init__("sdf_query_node")
 
         # --- parameters ----------------------------------------------------
@@ -118,7 +119,7 @@ class SdfQueryNode(Node):
         """Generate (N, 3) grid points in column-major (x fastest) order, matching grid_map's layout."""
         half_x = (self._x_cells - 1) // 2
         half_y = (self._y_cells - 1) // 2
-        # iterate y outer (high → low), x inner (high → low) so consecutive points share a y row
+        # iterate y outer (high -> low), x inner (high -> low) so consecutive points share a y row
         ys = np.arange(half_y, -half_y - 1, -1, dtype=np.float64) * self._resolution + self._y
         xs = np.arange(half_x, -half_x - 1, -1, dtype=np.float64) * self._resolution + self._x
         gx, gy = np.meshgrid(xs, ys, indexing="xy")  # both (y_cells, x_cells)
@@ -330,6 +331,11 @@ class SdfQueryNode(Node):
 
 
 def main(args=None):
+    """Spin an SdfQueryNode until shutdown.
+
+    Args:
+        args: Optional CLI argument list forwarded to ``rclpy.init``.
+    """
     rclpy.init(args=args)
     node = SdfQueryNode()
     try:

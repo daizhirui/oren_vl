@@ -246,14 +246,15 @@ class EvaluatorBase:
         Args:
             pred_mesh_path: Path to predicted mesh file.
             gt_mesh_path: Path to ground-truth mesh file.
-            bbox_def_file: Optional path to a file defining the bounding box for evaluation, in case the meshes are not well-aligned.
+            bbox_def_file: Optional path to a file defining the bounding box for evaluation, in case the meshes are not
+                well-aligned.
             threshold: Distance threshold for precision/recall/completion_ratio.
             num_samples: Number of points to sample on the predicted mesh for evaluation.
             seed: Random seed for sampling.
 
         Returns:
-            dict with completion_ratio, completion, accuracy, chamfer, precision, recall, f1,
-            threshold, num_samples, seed.
+            dict with completion_ratio, completion, accuracy, chamfer, precision, recall, f1, threshold, num_samples,
+            seed.
         """
         pred_mesh = trimesh.load_mesh(pred_mesh_path)
         gt_mesh = trimesh.load_mesh(gt_mesh_path)
@@ -310,8 +311,7 @@ class EvaluatorBase:
         """
         Compute mesh metrics with point cloud as ground truth.
 
-        Prediction is a mesh (sampled to num_pred_samples points). Ground truth is a point cloud
-        loaded from file (.npy, .ply, or .pcd), used as-is.
+        The predicted mesh is sampled to `num_samples` surface points; the GT point cloud is used as-is (no resampling).
 
         Args:
             pred_mesh_path: Path to predicted mesh file.
@@ -322,8 +322,8 @@ class EvaluatorBase:
             seed: Random seed for sampling.
 
         Returns:
-            dict with completion_ratio, completion, accuracy, chamfer, precision, recall, f1,
-            threshold, num_samples, num_gt_points, seed.
+            dict with completion_ratio, completion, accuracy, chamfer, precision, recall, f1, threshold, num_samples,
+            num_gt_points, seed.
         """
         pred_mesh = trimesh.load_mesh(pred_mesh_path)
         gt_pts_all = _load_pointcloud(gt_pointcloud_path)
@@ -352,13 +352,13 @@ class EvaluatorBase:
         ax1.hist(dist_pred_to_gt, bins=50, color="steelblue", edgecolor="black", alpha=0.7)
         ax1.set_xlabel("Distance")
         ax1.set_ylabel("Count")
-        ax1.set_title("dist_pred_to_gt (pred → nearest GT)")
+        ax1.set_title("dist_pred_to_gt (pred -> nearest GT)")
         ax1.axvline(threshold, color="red", linestyle="--", label=f"threshold={threshold}")
         ax1.legend()
         ax2.hist(dist_gt_to_pred, bins=50, color="coral", edgecolor="black", alpha=0.7)
         ax2.set_xlabel("Distance")
         ax2.set_ylabel("Count")
-        ax2.set_title("dist_gt_to_pred (GT → nearest pred)")
+        ax2.set_title("dist_gt_to_pred (GT -> nearest pred)")
         ax2.axvline(threshold, color="red", linestyle="--", label=f"threshold={threshold}")
         ax2.legend()
         plt.tight_layout()
@@ -437,7 +437,8 @@ class EvaluatorBase:
                 grid_bound: (2, 3) tensor of boundary min and max
                 grid_shape: (3, ) tensor of grid shape (nx, ny, nz)
                 grid_resolution: (1, ) tensor of grid resolution
-                mask: (nx, ny, nz) boolean tensor, where True indicates the vertex is valid. None if no filter is applied.
+                mask: (nx, ny, nz) boolean tensor, where True indicates the vertex is valid. None if no filter is
+                    applied.
                 sdf_prior: (nx, ny, nz) tensor of SDF prior values on the grid
                 sdf_residual: (nx, ny, nz) tensor of SDF residual values on the grid
                 sdf: (nx, ny, nz) tensor of final SDF values on the grid
@@ -499,8 +500,8 @@ class EvaluatorBase:
         )
 
         if not field_grid:
-            # extract_field_grid returns {} when grid_vertex_filter rejects every vertex
-            # (e.g. bounds don't intersect any inserted voxels yet).
+            # extract_field_grid returns {} when grid_vertex_filter rejects every vertex (e.g. bounds don't intersect
+            # any inserted voxels yet).
             return [o3d.geometry.TriangleMesh() for _ in fields]
 
         mask = None

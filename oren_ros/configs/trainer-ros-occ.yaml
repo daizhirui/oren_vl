@@ -36,21 +36,27 @@ model:
         init_voxel_num: 80000
         insertion_threshold: 3
         skip_insertion_if_exists: true # speed up a bit
-        enable_sdf: false
-        enable_occupancy: false
-        enable_implicit: true
-        implicit_feature_dim: 2
-        implicit_num_levels: 1
-        gradient_augmentation: false
         independent_smallest_leaf_vertex: false
-    residual_net_cfg:
-        cfg_identifier: oren.residual_net.ResidualNetConfig
-        mlp_activation: LeakyReLU
-        hidden_dims: [32, 32]
-        normalization: ""
-        output_scale: 1.0
+    field:
+        cfg_identifier: oren.field_storage_config.FieldStorageConfig
+        name: occ
         output_dim: 1
-        implicit_feature_dim: 1
+        mode: implicit
+        # explicit_prior_init: 0.0
+        # gradient_augmentation: false
+        implicit_feature_dim: 2
+        implicit_feature_level: 1
+        implicit_feature_aggregation: cat
+        shared_bank:
+        auxiliary_banks: []
+        implicit_net_cfg:
+            cfg_identifier: oren.implicit_net.ImplicitNetConfig
+            mlp_activation: LeakyReLU
+            hidden_dims: [32, 32]
+            normalization:
+            output_scale: 1.0
+            output_dim: 1
+            input_dim: 1
 criterion_identifier: oren.occ_criterion.OccCriterion
 criterion:
     cfg_identifier: oren.occ_criterion.OccCriterionConfig

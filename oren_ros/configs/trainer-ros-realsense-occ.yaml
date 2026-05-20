@@ -1,0 +1,49 @@
+base_config: trainer-ros-occ.yaml
+
+exp_name: oren_ros_realsense_occ
+
+data:
+    dataset_args:
+        min_depth: 0.3
+        max_depth: 10.0
+        # RealSense D455 848x480 intrinsics
+        intrinsics_fx: 429.47845458984375
+        intrinsics_fy: 429.47845458984375
+        intrinsics_cx: 429.2593078613281
+        intrinsics_cy: 243.30862426757812
+    apply_bound: false
+    # Indoor realsense scene (~6 x 5 x 2.3 m room)
+    bound_min: [-3.0, -2.5, 0.0]
+    bound_max: [3.0, 2.5, 2.3]
+
+bound_min: [-3.0, -2.5, 0.0]  # auto-overwritten from data.bound_* at trainer init
+bound_max: [3.0, 2.5, 2.3]
+key_frame_set:
+    insert_ratio: 0.7
+    selection_window_size: 16
+model:
+    octree_cfg:
+        resolution: 0.15
+        tree_depth: 7
+        semi_sparse_depth: 4
+        init_voxel_num: 80000
+        insertion_threshold: 5
+criterion:
+    surface_loss_weight: 1.0
+    free_loss_weight: 2.0
+    occ_loss_weight: 1.0
+num_rays_total: 10240
+sample_rays:
+    depth_min: 0.3
+    depth_max: 10.0
+    n_stratified: 1
+    n_perturbed_pos: 1
+    n_perturbed_neg: 1
+    surface_margin: 0.15
+    sigma_s_pos: 0.01
+    sigma_s_neg: 0.05
+num_init_frames: 2
+finite_difference_eps: 0.025
+mesh_resolution: 0.02
+mesh_iso_value: 1.0
+lr: 0.005

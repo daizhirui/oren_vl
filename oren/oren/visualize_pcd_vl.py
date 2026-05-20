@@ -1,4 +1,3 @@
-# pyright: reportPrivateImportUsage=none, reportAttributeAccessIssue=none
 """PCA-visualize a VL feature bundle as a single colorized point cloud.
 
 For every frame in the bundle, backproject depth into world points, then
@@ -6,9 +5,9 @@ project the per-pixel VL feature through a PCA (fit on a subsample of all
 features) to get an RGB color. The result is one Open3D point cloud.
 
 Two-pass design keeps peak memory bounded:
-  1. Fit PCA on ~`pca_fit_samples` features sampled across frames.
-  2. Stream over the dataset: backproject + transform per frame, accumulate
-     only (xyz, rgb) — never the full feature matrix.
+    1. Fit PCA on ~`pca_fit_samples` features sampled across frames.
+    2. Stream over the dataset: backproject + transform per frame, accumulate
+        only (xyz, rgb) — never the full feature matrix.
 """
 
 import pathlib
@@ -17,12 +16,11 @@ from typing import Optional
 
 import numpy as np
 import open3d as o3d
-import torch
 from sklearn.decomposition import PCA
 from tqdm import tqdm
 
+from oren.dataset.vl_feature_dataset import DataLoader as VlFeatureDataset
 from oren.utils.config_abc import ConfigABC
-from oren_vl.dataset.vl_features_dataset import VLFeaturesDataset, depth_to_world_points
 
 
 @dataclass
@@ -32,23 +30,31 @@ class VisualizePcdConfig(ConfigABC):
     pca_fit_samples: int = 30000
     voxel_downsample: float = -1.0  # >0 enables o3d voxel_down_sample at this size (m)
     save_screenshot: Optional[str] = None  # PNG path for headless render
-    save_pcd: Optional[str] = None         # write the PCA-colored cloud (.ply / .pcd / ...)
-    interactive: bool = False              # open an Open3D window (default if no screenshot)
+    save_pcd: Optional[str] = None  # write the PCA-colored cloud (.ply / .pcd / ...)
+    interactive: bool = False  # open an Open3D window (default if no screenshot)
     seed: int = 0
 
 
-def fit_pca(dataset: VLFeaturesDataset, stride: int, n_samples: int, seed: int) -> PCA:
-    """Pass 1: fit PCA on features sampled approximately uniformly across frames."""
+def fit_pca(dataset: VlFeatureDataset, stride: int, n_samples: int, seed: int) -> PCA:
+    """Pass 1: fit PCA on features sampled approximately uniformly across frames.
+
+    Args:
+        dataset: VL feature bundle to draw samples from.
+        stride: Only every ``stride``-th frame is sampled.
+        n_samples: Approximate total number of feature vectors to feed into ``PCA.fit``.
+        seed: Seed for the per-frame uniform sampler.
+
+    Returns:
+        Fitted ``sklearn.decomposition.PCA`` with ``n_components=3``.
+    """
     indices = list(range(0, len(dataset), stride))
     per_frame = max(1, n_samples // max(1, len(indices)))
     rng = np.random.default_rng(seed)
 
     chunks = []
     for idx in tqdm(indices, desc="PCA fit pass", ncols=80):
-        _, feat, depth, _ = dataset[idx]
-        feat = feat.float()  # (C, h, w)
-        valid = (depth > 0).flatten()
-        feat_flat = feat.permute(1, 2, 0).reshape(-1, feat.shape[0])[valid]  # (M, C)
+        frame = dataset[idx]
+        feat_flat = frame.get_vl_features(valid_only=True).float()  # (M, C)
         if feat_flat.shape[0] == 0:
             continue
         take = min(per_frame, feat_flat.shape[0])
@@ -66,23 +72,31 @@ def fit_pca(dataset: VLFeaturesDataset, stride: int, n_samples: int, seed: int) 
 
 
 def stream_points_and_rgb(
-    dataset: VLFeaturesDataset,
-    K_feat: torch.Tensor,
+    dataset: VlFeatureDataset,
     stride: int,
     pca: PCA,
 ):
-    """Pass 2: backproject + apply PCA per-frame, accumulating only (xyz, rgb_pca)."""
+    """Pass 2: backproject + apply PCA per-frame, accumulating only (xyz, rgb_pca).
+
+    Args:
+        dataset: VL feature bundle providing per-frame :class:`VlFrame` objects with pre-backprojected
+            camera-frame points and per-point VL features.
+        stride: Only every ``stride``-th frame is processed.
+        pca: PCA fitted by ``fit_pca``; used to project features to 3-D RGB-space coordinates.
+
+    Returns:
+        pts: (M, 3) world-frame point coordinates.
+        rgb_pca: (M, 3) PCA-projected feature coordinates aligned with ``pts``.
+    """
     pts_chunks = []
     rgb_chunks = []
     indices = list(range(0, len(dataset), stride))
     for idx in tqdm(indices, desc="Backproject + transform", ncols=80):
-        _, feat, depth, pose = dataset[idx]
-        feat = feat.float()
-        pts_world, valid = depth_to_world_points(depth, pose, K_feat)
+        frame = dataset[idx]
+        pts_world = frame.get_points(to_world_frame=True, device="cpu")  # (M, 3)
         if pts_world.numel() == 0:
             continue
-        feat_flat = feat.permute(1, 2, 0).reshape(-1, feat.shape[0])
-        feat_flat = feat_flat[valid.flatten()].numpy()
+        feat_flat = frame.get_vl_features(valid_only=True, device="cpu").float().numpy()  # (M, C)
         rgb = pca.transform(feat_flat)  # (M, 3)
         pts_chunks.append(pts_world.numpy())
         rgb_chunks.append(rgb)
@@ -92,15 +106,18 @@ def stream_points_and_rgb(
 
 
 def main(cfg: VisualizePcdConfig) -> None:
+    """Fit a PCA over the bundle's VL features, build a PCA-colored point cloud, and render / save it.
+
+    Args:
+        cfg: Visualization configuration with the input bundle path and optional save / interactive flags.
+    """
     assert cfg.vl_features_dir is not None, "VisualizePcdConfig.vl_features_dir is required"
 
-    dataset = VLFeaturesDataset(cfg.vl_features_dir)
-    K_feat = torch.from_numpy(dataset.K_feat)
-    print(f"Loaded {len(dataset)} frames; feature {dataset.channels}-d at "
-          f"{dataset.h_feat}x{dataset.w_feat}.")
+    dataset = VlFeatureDataset(cfg.vl_features_dir)
+    print(f"Loaded {len(dataset)} frames; feature {dataset.channels}-d at " f"{dataset.h_feat}x{dataset.w_feat}.")
 
     pca = fit_pca(dataset, cfg.frame_stride, cfg.pca_fit_samples, cfg.seed)
-    pts, rgb_pca = stream_points_and_rgb(dataset, K_feat, cfg.frame_stride, pca)
+    pts, rgb_pca = stream_points_and_rgb(dataset, cfg.frame_stride, pca)
     print(f"Collected {pts.shape[0]} points.")
 
     # Rank-normalize per channel so each color axis spans [0, 1].

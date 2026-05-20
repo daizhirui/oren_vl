@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -8,7 +7,7 @@ from oren.utils.config_abc import ConfigABC
 from oren.utils.registry import register_criterion
 
 
-def _masked_mean(values: torch.Tensor, mask: Optional[torch.Tensor]) -> torch.Tensor:
+def _masked_mean(values: torch.Tensor, mask: torch.Tensor | None) -> torch.Tensor:
     if mask is None:
         return values.mean()
     weights = mask.to(values.dtype)
@@ -52,18 +51,23 @@ class SdfCriterion(nn.Module):
         [n_stratified+n_perturbed_neg : n_stratified+n_perturbed]      positive perturbations, behind surface (GT SDF < 0)
         [-1]                                                           on-surface sample (GT SDF = 0)
 
-    The GT SDF values for both perturbation slots are concatenated into gt_sdf_perturb in the same
-    order; positive_perturbation_mask is False for the first n_perturbed_neg and True for the next
-    n_perturbed_pos.
+    The GT SDF values for both perturbation slots are concatenated into gt_sdf_perturb in the same order;
+    positive_perturbation_mask is False for the first n_perturbed_neg and True for the next n_perturbed_pos.
     """
 
     needs_grad = True  # criterion needs gradients w.r.t. the input positions for the eikonal loss
 
-    def __init__(self, cfg: SdfCriterionConfig, n_stratified: int, n_perturbed: int) -> None:
+    def __init__(self, cfg: SdfCriterionConfig) -> None:
+        """Construct the SDF criterion and resolve the per-term distance loss kernels.
+
+        Args:
+            cfg: criterion configuration carrying per-term weights and L1/L2 selectors.
+        """
         super().__init__()
         self.cfg = cfg
-        self.n_stratified = n_stratified
-        self.n_perturbed = n_perturbed
+
+        self.n_stratified: int = -1
+        self.n_perturbed: int = -1
 
         if self.cfg.boundary_loss_type == "L1":
             self.boundary_loss_fn = nn.L1Loss(reduction="none")
@@ -108,7 +112,9 @@ class SdfCriterion(nn.Module):
         positive_perturbation_mask: torch.Tensor,
         perturb_sigma_pos: float,
         perturb_sigma_neg: float,
-        valid_mask: Optional[torch.Tensor] = None,
+        n_stratified: int,
+        n_perturbed: int,
+        valid_mask: torch.Tensor | None = None,
     ):
         """
         Compute the total loss as a weighted sum of individual loss components based on the configuration.
@@ -119,13 +125,24 @@ class SdfCriterion(nn.Module):
             pred_prior_grad: (B, 3) Predicted prior gradients for all samples.
             gt_sdf_perturb: (B, n_perturbed) Ground truth SDF values for perturbed samples.
             gt_sdf_stratified: (B, n_stratified) Ground truth SDF values for stratified samples.
-            positive_perturbation_mask: (B, n_perturbed) Boolean mask indicating which perturbed samples are in free space (positive SDF).
-            perturb_sigma_pos: float, lower bound on |pred SDF| for positive perturbations (samples behind the surface).
-                Should match cfg.sample_rays.sigma_s_pos.
-            perturb_sigma_neg: float, lower bound on |pred SDF| for negative perturbations (samples in front of the surface).
-                Should match cfg.sample_rays.sigma_s_neg.
+            positive_perturbation_mask: (B, n_perturbed) Boolean mask indicating which perturbed samples are in free
+                space (positive SDF).
+            perturb_sigma_pos: float, lower bound on |pred SDF| for positive perturbations (samples behind the
+                surface). Should match cfg.sample_rays.sigma_s_pos.
+            perturb_sigma_neg: float, lower bound on |pred SDF| for negative perturbations (samples in front of the
+                surface). Should match cfg.sample_rays.sigma_s_neg.
+            n_stratified: number of stratified free-space samples per ray (slice [: n_stratified]).
+            n_perturbed: number of perturbed samples per ray (slice [n_stratified : n_stratified + n_perturbed]).
             valid_mask: (B, N) Optional boolean mask. False entries are excluded from every loss reduction.
+
+        Returns:
+            loss: scalar weighted-sum loss tensor.
+            loss_dict: per-term breakdown (Python floats) plus a `total_loss` entry.
         """
+        # Cache for the helpers (get_eikonal_loss_*, get_heat_loss, etc.) that index by these counts.
+        self.n_stratified = n_stratified
+        self.n_perturbed = n_perturbed
+
         if valid_mask is not None:
             self.mask_surface = valid_mask[:, -1]
             self.mask_perturb = valid_mask[:, self.n_stratified : self.n_stratified + self.n_perturbed]
@@ -222,6 +239,14 @@ class SdfCriterion(nn.Module):
         return loss, loss_dict
 
     def get_boundary_loss(self, pred_sdf: torch.Tensor):
+        """Mean distance-loss between predicted on-surface SDF and zero.
+
+        Args:
+            pred_sdf: (B, N) predicted SDF values for all samples; only the surface slot `[:, -1]` is used.
+
+        Returns:
+            Scalar masked-mean boundary loss.
+        """
         pred_sdf_surface = pred_sdf[:, -1]
         per_elem = self.boundary_loss_fn(pred_sdf_surface, torch.zeros_like(pred_sdf_surface))
         return _masked_mean(per_elem, self.mask_surface)
@@ -234,6 +259,23 @@ class SdfCriterion(nn.Module):
         perturb_sigma_pos: float,
         perturb_sigma_neg: float,
     ):
+        """Hinge-style perturbation loss over both signs of perturbed samples.
+
+        After flipping signs for positive perturbations, the loss is zero when `lower_bound <= pred <= upper_bound`,
+        grows linearly above the upper bound (the GT magnitude), and grows exponentially below the lower bound
+        (the sampling-floor `sigma`).
+
+        Args:
+            pred_sdf_perturb: (B, n_perturbed) predicted SDF values for perturbed samples.
+            positive_perturbation_mask: (B, n_perturbed) True where the sample is behind the surface.
+            gt_sdf_perturb: (B, n_perturbed) ground-truth SDF for perturbed samples (same sign convention as pred).
+            perturb_sigma_pos: lower bound on `|pred|` for positive perturbations (samples behind the surface).
+            perturb_sigma_neg: lower bound on `|pred|` for negative perturbations (samples in front of the
+                surface).
+
+        Returns:
+            Scalar masked-mean perturbation loss over `self.mask_perturb`.
+        """
         # Clone to avoid modifying input tensors
         pred_sdf_perturb = pred_sdf_perturb.clone()
         gt_sdf_perturb = gt_sdf_perturb.clone()
@@ -243,8 +285,8 @@ class SdfCriterion(nn.Module):
         gt_sdf_perturb[positive_perturbation_mask] = -gt_sdf_perturb[positive_perturbation_mask]
 
         perturb_loss_upperbound = gt_sdf_perturb
-        # Lower bound depends on which side of the surface the sample is on, matching the sampling
-        # range floor (|offset| >= sigma_s_pos or sigma_s_neg).
+        # Lower bound depends on which side of the surface the sample is on, matching the sampling range floor
+        # (|offset| >= sigma_s_pos or sigma_s_neg).
         perturb_loss_lowerbound = torch.where(
             positive_perturbation_mask,
             torch.full_like(pred_sdf_perturb, perturb_sigma_pos),
@@ -261,21 +303,54 @@ class SdfCriterion(nn.Module):
         return _masked_mean(perturb_loss, self.mask_perturb)
 
     def get_eikonal_loss_surface(self, grad_norm: torch.Tensor):
+        """Eikonal regularizer at the on-surface slot: push `|grad|` toward 1.
+
+        Args:
+            grad_norm: (B, N) per-sample gradient L2 norms; only the surface slot `[:, -1]` is used.
+
+        Returns:
+            Scalar masked-mean eikonal loss over `self.mask_surface`.
+        """
         grad_norm_surface = grad_norm[:, -1]  # surface
         per_elem = self.eikonal_loss_fn(grad_norm_surface, torch.ones_like(grad_norm_surface))
         return _masked_mean(per_elem, self.mask_surface)
 
     def get_eikonal_loss_perturbation(self, grad_norm: torch.Tensor):
+        """Eikonal regularizer at perturbed samples: push `|grad|` toward 1.
+
+        Args:
+            grad_norm: (B, N) per-sample gradient L2 norms; the perturbation slice is used.
+
+        Returns:
+            Scalar masked-mean eikonal loss over `self.mask_perturb`.
+        """
         grad_norm_perturbation = grad_norm[:, self.n_stratified : self.n_stratified + self.n_perturbed]
         per_elem = self.eikonal_loss_fn(grad_norm_perturbation, torch.ones_like(grad_norm_perturbation))
         return _masked_mean(per_elem, self.mask_perturb)
 
     def get_eikonal_loss_space(self, grad_norm: torch.Tensor):
+        """Eikonal regularizer at stratified free-space samples: push `|grad|` toward 1.
+
+        Args:
+            grad_norm: (B, N) per-sample gradient L2 norms; the stratified slice is used.
+
+        Returns:
+            Scalar masked-mean eikonal loss over `self.mask_strat`.
+        """
         grad_norm_space = grad_norm[:, : self.n_stratified]  # free space
         per_elem = self.eikonal_loss_fn(grad_norm_space, torch.ones_like(grad_norm_space))
         return _masked_mean(per_elem, self.mask_strat)
 
     def get_projection_loss(self, pred_sdf: torch.Tensor, gt_sdf_stratified: torch.Tensor):
+        """Distance loss between predicted and ground-truth SDF at stratified samples.
+
+        Args:
+            pred_sdf: (B, n_stratified) predicted SDF at stratified samples.
+            gt_sdf_stratified: (B, n_stratified) ground-truth SDF at the same samples.
+
+        Returns:
+            Scalar masked-mean projection loss over `self.mask_strat`.
+        """
         per_elem = self.projection_loss_fn(pred_sdf, gt_sdf_stratified)
         return _masked_mean(per_elem, self.mask_strat)
 
@@ -284,8 +359,22 @@ class SdfCriterion(nn.Module):
         positive_sdf_mask: torch.Tensor,
         negative_sdf_mask: torch.Tensor,
         pred_sdf: torch.Tensor,
-        mask: Optional[torch.Tensor] = None,
+        mask: torch.Tensor | None = None,
     ):
+        """Soft sign losses: push free-space predictions positive and occupied predictions negative.
+
+        Uses `tanh(temperature * pred)` so the loss saturates once the predicted sign is confidently correct.
+
+        Args:
+            positive_sdf_mask: boolean mask selecting samples whose GT SDF should be positive (free space).
+            negative_sdf_mask: boolean mask selecting samples whose GT SDF should be negative (occupied).
+            pred_sdf: predicted SDF values; the two masks index into this tensor.
+            mask: optional boolean validity mask AND-ed with both sign masks before reduction.
+
+        Returns:
+            sign_loss_free: scalar mean sign loss for free-space samples (zero if none).
+            sign_loss_occ: scalar mean sign loss for occupied samples (zero if none).
+        """
         if mask is not None:
             positive_sdf_mask = positive_sdf_mask & mask
             negative_sdf_mask = negative_sdf_mask & mask
@@ -302,6 +391,18 @@ class SdfCriterion(nn.Module):
         return sign_loss_free, sign_loss_occ
 
     def get_heat_loss(self, pred_sdf: torch.Tensor, grad_norm: torch.Tensor):
+        """Heat-equation regularizer evaluated at stratified free-space samples.
+
+        Penalizes `0.5 * exp(-lambda * |sdf|)^2 * (|grad|^2 + 1)`, encouraging smaller gradients where the
+        prediction is near the surface.
+
+        Args:
+            pred_sdf: (B, N) predicted SDF for all samples; only the stratified slice is used.
+            grad_norm: (B, N) per-sample gradient L2 norms; only the stratified slice is used.
+
+        Returns:
+            Scalar masked-mean heat-equation loss over `self.mask_strat`.
+        """
         pred_sdf = pred_sdf[:, : self.n_stratified]  # only consider free space samples
         grad_norm = grad_norm[:, : self.n_stratified]
         heat = torch.exp(-self.cfg.heat_loss_lambda * pred_sdf.abs())

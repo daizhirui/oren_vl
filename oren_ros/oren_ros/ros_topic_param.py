@@ -32,6 +32,12 @@ class RosTopicParam(ConfigABC):
     avoid_ros_namespace_conventions: bool = False
 
     def declare_ros_params(self, ros_node, prefix: str = ""):
+        """Declare one ROS 2 parameter per field on ``ros_node``, seeded from this dataclass's current values.
+
+        Args:
+            ros_node: rclpy node on which the parameters are declared.
+            prefix: Optional dotted parameter-name prefix (e.g. ``"depth_topic"`` -> ``"depth_topic.path"``).
+        """
         if prefix:
             prefix = prefix.rstrip(".") + "."
 
@@ -53,6 +59,12 @@ class RosTopicParam(ConfigABC):
         declare_fn("avoid_ros_namespace_conventions", self.avoid_ros_namespace_conventions)
 
     def update_from_ros_params(self, ros_node, prefix: str = ""):
+        """Refresh each field on this dataclass from the matching ROS parameter on ``ros_node``.
+
+        Args:
+            ros_node: rclpy node whose parameters are read back into this dataclass.
+            prefix: Optional dotted parameter-name prefix matching the one used in ``declare_ros_params``.
+        """
         if prefix:
             prefix = prefix.rstrip(".") + "."
 
@@ -74,6 +86,11 @@ class RosTopicParam(ConfigABC):
         self.avoid_ros_namespace_conventions = bool(get_fn("avoid_ros_namespace_conventions"))
 
     def get_qos(self):
+        """Build a fresh ``QoSProfile`` from this config, starting from ``qos_preset`` if non-empty.
+
+        Returns:
+            QoSProfile populated with the configured policies and durations.
+        """
         if self.qos_preset:
             # Rebuild from the preset's fields rather than mutating the singleton
             # `QoSPresetProfiles.<NAME>.value` (which would bleed into every other

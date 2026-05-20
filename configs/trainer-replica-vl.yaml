@@ -1,0 +1,103 @@
+cfg_identifier: oren.trainer_config.TrainerConfig
+trainer_identifier: oren.vl_trainer.VlTrainer
+seed: 12345
+log_dir: logs
+exp_name: replica_vl
+device: cuda
+data:
+    cfg_identifier: oren.dataset.data_config.DataConfig
+    dataset_name: vl_feature_dataset
+    dataset_args:
+        data_path: "data/replica/room0/vl_features"
+        min_depth: 0.0
+        max_depth: -1.0
+    apply_bound: false
+    bound_min:
+    bound_max:
+    start_frame: 0
+    end_frame: -1
+bound_min: [-10, -10, -10]
+bound_max: [10, 10, 10]
+key_frame_set:
+    cfg_identifier: oren.key_frame_set.KeyFrameSetConfig
+    insert_method: intersection
+    insert_interval: 50
+    insert_ratio: 0.65
+    frame_selection: multiple_max_set_coverage
+    selection_window_size: 8
+    frame_weight: uniform
+model_identifier: oren.vl_network.VlNetwork
+model:
+    cfg_identifier: oren.vl_network.VlNetworkConfig
+    octree_cfg:
+        cfg_identifier: oren.octree_config.OctreeConfig
+        # 5cm leaves with tree_depth=9 -> octree covers +/-12.8 m per axis at the finest size;
+        # semi_sparse_depth=6 keeps the top of the tree dense for fast lookup.
+        resolution: 0.05
+        tree_depth: 9
+        semi_sparse_depth: 6
+        init_voxel_num: 200000
+        independent_smallest_leaf_vertex: false
+        # At 5 cm resolution each frame's valid pixels rarely produce >3 hits per voxel, so the
+        # default of 3 would silently drop most insertions; 0 lets accumulation across frames
+        # yield confident leaves.
+        insertion_threshold: 0
+        skip_insertion_if_exists: true
+    field:
+        cfg_identifier: oren.field_storage_config.FieldStorageConfig
+        name: vl
+        # CLIP EVA02-L-14 feature dimension (matches generate_vl_features default).
+        output_dim: 1024
+        # Pure-scatter pipeline: no implicit head, prior is the kernel-weighted gather of values.
+        mode: explicit
+        explicit_prior_init: 0.0
+        gradient_augmentation: false
+        # Trilinear partition-of-unity scatter: each per-point feature is splatted to all 8 corners
+        # of its leaf voxel weighted by the standard trilinear basis. Gather mirrors the scatter so
+        # the field reads back the trilinear interpolation of the accumulated corner values.
+        prior_fuser_cfg:
+            cfg_identifier: oren.field_fusion.TrilinearFuserConfig
+        shared_bank:
+        auxiliary_banks: []
+criterion_identifier: oren.vl_criterion.VlCriterion
+criterion:
+    cfg_identifier: oren.vl_criterion.VlCriterionConfig
+    vl_loss_weight: 1.0
+    vl_loss_prior_weight: 1.0
+    vl_loss_type: l2
+mode: scatter
+online: false
+offline_epochs: 1
+offline_batch_frames: 10
+offline_shuffle: false
+num_init_frames: 0
+init_frame_iterations: 0
+num_iterations_per_frame: 0
+num_rays_total: 20480
+extra_surface_sample: false
+frame_downsample: 1
+sample_rays:
+    cfg_identifier: oren.utils.sampling.SampleRaysConfig
+    n_stratified: 1
+    n_perturbed_pos: 1
+    n_perturbed_neg: 1
+    depth_min: 0.1
+    depth_max: 10.0
+    surface_margin: 0.09
+    sigma_s_pos: 0.03
+    sigma_s_neg: 0.03
+batch_size: 204800
+lr: 0.005
+grad_method: finite_difference
+finite_difference_eps: 0.03
+final_iterations: 0
+final_evaluate: false
+final_save_model: true
+final_save_mesh: false
+mesh_resolution: 0.02
+mesh_iso_value: 0.0
+clean_mesh: true
+final_save_slice: false
+ckpt_interval: -1
+profiling: false
+profiling_verbose: false

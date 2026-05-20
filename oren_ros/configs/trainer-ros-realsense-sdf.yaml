@@ -1,57 +1,121 @@
-base_config: trainer-ros-sdf.yaml
-
+cfg_identifier: oren.trainer_config.TrainerConfig
+trainer_identifier: oren.sdf_trainer.SdfTrainer
+seed: 12345
+log_dir: logs
 exp_name: oren_ros_realsense_sdf
-
+device: cuda
 data:
+    cfg_identifier: oren.dataset.data_config.DataConfig
+    dataset_name: ros
     dataset_args:
         min_depth: 0.3
         max_depth: 4.0
-        # RealSense D455 848x480 intrinsics
         intrinsics_fx: 429.47845458984375
         intrinsics_fy: 429.47845458984375
         intrinsics_cx: 429.2593078613281
         intrinsics_cy: 243.30862426757812
     apply_bound: false
-    # Indoor realsense scene (~6 x 5 x 2.3 m room)
     bound_min: [-3.0, -2.5, 0.0]
     bound_max: [3.0, 2.5, 2.3]
-
+    start_frame: 0
+    end_frame: -1
 bound_min: [-3.0, -2.5, 0.0]  # auto-overwritten from data.bound_* at trainer init
 bound_max: [3.0, 2.5, 2.3]
 key_frame_set:
+    cfg_identifier: oren.key_frame_set.KeyFrameSetConfig
+    insert_method: intersection
+    insert_interval: 50
     insert_ratio: 0.7
+    frame_selection: multiple_max_set_coverage
     selection_window_size: 16
+    frame_weight: uniform
+model_identifier: oren.sdf_network.SdfNetwork
 model:
+    cfg_identifier: oren.sdf_network.SdfNetworkConfig
     octree_cfg:
-        # Bag motion: x∈[-2.78, 3.11], y∈[-2.05, 1.51], z∈[0.06, 1.54];
-        # plus 5 m max sample depth -> need >=±~8 m. 0.1 * 2^8 = 25.6 m covers it.
-        # init_voxel_num is a hard cap on Python-side priors / C++ vertex IDs
-        # (the prior buffers never grow). 2M comfortably covers a 25.6 m octree
-        # at 0.1 m for the full 70 s bag without overflowing vertex indices.
+        cfg_identifier: oren.octree_config.OctreeConfig
         resolution: 0.2
         tree_depth: 7
         semi_sparse_depth: 4
         init_voxel_num: 400000
         insertion_threshold: 8
+        skip_insertion_if_exists: true
+        independent_smallest_leaf_vertex: false
+    field:
+        cfg_identifier: oren.field_storage_config.FieldStorageConfig
+        name: sdf
+        output_dim: 1
+        mode: hybrid
+        explicit_prior_init: 0.0
+        gradient_augmentation: true
         implicit_feature_dim: 2
-        implicit_num_levels: 1
-    residual_net_cfg:
-        hidden_dims: [32, 32]
-        output_scale: 0.1
+        implicit_feature_level: 1
+        implicit_feature_aggregation: cat
+        shared_bank:
+        auxiliary_banks: []
+        implicit_net_cfg:
+            cfg_identifier: oren.implicit_net.ImplicitNetConfig
+            mlp_activation: LeakyReLU
+            hidden_dims: [32, 32]
+            normalization:
+            output_scale: 0.1
+            output_dim: 1
+            input_dim: 1
+criterion_identifier: oren.sdf_criterion.SdfCriterion
 criterion:
+    cfg_identifier: oren.sdf_criterion.SdfCriterionConfig
     boundary_loss_weight: 100
-    perturbation_loss_weight: 500
     boundary_loss_prior_weight: 100
+    boundary_loss_type: L1
+    perturbation_loss_weight: 500
     perturbation_loss_prior_weight: 500
+    perturbation_loss_type: L1
+    perturbation_loss_exp_penalty: 1.0
+    eikonal_loss_surface_weight: 30
+    eikonal_loss_surface_prior_weight: 30
+    eikonal_loss_perturbation_weight: 50
+    eikonal_loss_perturbation_prior_weight: 50
+    eikonal_loss_space_weight: 100
+    eikonal_loss_space_prior_weight: 100
+    eikonal_loss_type: L1
+    projection_loss_weight: 100
+    projection_loss_prior_weight: 100
+    projection_loss_type: L1
+    heat_loss_weight: 0.0
+    heat_loss_lambda: 4.0
+    sign_loss_free_weight: 0.0
+    sign_loss_occ_weight: 0.0
+    sign_loss_temperature: 100.0
+num_init_frames: 2
+init_frame_iterations: 10
+num_iterations_per_frame: 1
 num_rays_total: 10240
+extra_surface_sample: false
+frame_downsample: 10
 sample_rays:
-    depth_min: 0.3
-    depth_max: 4.0
+    cfg_identifier: oren.utils.sampling.SampleRaysConfig
+    n_stratified: 1
     n_perturbed_pos: 1
     n_perturbed_neg: 1
+    depth_min: 0.3
+    depth_max: 4.0
     surface_margin: 0.15
     sigma_s_pos: 0.03
     sigma_s_neg: 0.04
-num_init_frames: 2
+batch_size: 204800
+lr: 0.005
+grad_method: finite_difference
 finite_difference_eps: 0.025
+final_iterations: 0
+final_evaluate: true
+final_save_model: true
+save_mesh: true
 mesh_resolution: 0.03
+mesh_iso_value: 0.0
+clean_mesh: true
+save_slice: true
+slice_center:
+ckpt_interval: -1
+profiling: false
+profiling_verbose: false
+frozen_model_path:

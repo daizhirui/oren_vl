@@ -25,6 +25,11 @@ class _RosLoggerStream(io.TextIOBase):
     """File-like sink that forwards each completed line to a ROS logger."""
 
     def __init__(self, log_fn):
+        """Wrap a logger callable into a writable text stream.
+
+        Args:
+            log_fn: Callable that accepts a single string argument and emits it as a log line.
+        """
         super().__init__()
         self._log = log_fn
         self._buf = ""
@@ -33,6 +38,14 @@ class _RosLoggerStream(io.TextIOBase):
         return True
 
     def write(self, s: str) -> int:
+        """Buffer ``s`` and flush each completed (``\\n`` / ``\\r``-terminated) line through the wrapped logger.
+
+        Args:
+            s: Chunk of text written by tqdm, possibly containing partial lines.
+
+        Returns:
+            Number of input characters consumed (always ``len(s)``).
+        """
         if not s:
             return 0
         # tqdm uses \r to redraw the bar in place; treat \r and \n as line breaks.
@@ -56,7 +69,11 @@ _orig_write_func = _Tqdm.__dict__["write"].__func__
 
 
 def install_ros_tqdm_redirect(node: Node) -> None:
-    """Forward all tqdm output to ``node.get_logger().info`` from now on."""
+    """Forward all tqdm output to ``node.get_logger().info`` from now on.
+
+    Args:
+        node: rclpy node whose logger receives every tqdm progress-bar refresh and ``tqdm.write`` call.
+    """
     logger = node.get_logger()
     _state["stream"] = _RosLoggerStream(logger.info)
 

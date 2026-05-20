@@ -2,6 +2,11 @@ import torch
 
 
 def get_vertex_offsets():
+    """Build the canonical (1, 8, 3) tensor of voxel-vertex offsets in `{-1, 1}^3` (big-endian ordering).
+
+    Returns:
+        offsets: (1, 8, 3) tensor of voxel-vertex offsets in `{-1, 1}^3`.
+    """
     cut = torch.tensor([-1.0, 1.0], dtype=torch.float32)
     xx, yy, zz = torch.meshgrid(cut, cut, cut, indexing="ij")  # big-endian
     offsets = torch.stack([xx, yy, zz], dim=-1).reshape(1, 8, 3)  # (1,8,3)
@@ -21,6 +26,9 @@ def get_vertices(voxel_centers: torch.Tensor, voxel_sizes: torch.Tensor, resolut
         voxel_centers: (n_points, 3) metric center of the voxels
         voxel_sizes: (n_points, 1) grid size of the voxels
         resolution: float, the resolution of the voxel grid
+
+    Returns:
+        vertices: (n_points, 8, 3) metric coordinates of the 8 voxel corners for each input voxel.
     """
     global vertex_offsets1
     vertex_offsets1 = vertex_offsets1.to(voxel_centers.device)
@@ -36,7 +44,8 @@ def trilinear_interpolation(points: torch.Tensor, per_point_vertex_values: torch
     Args:
         points: (n_points, 3) point coordinates relative to the voxel, in [0, 1]^3
         per_point_vertex_values: (n_points, 8, ...) values at the 8 vertices of the voxel containing each point
-        little_endian: bool, whether the vertex ordering is little-endian. e.g. 1->(1,0,0). If False, big-endian is used.
+        little_endian: bool, whether the vertex ordering is little-endian. e.g. 1->(1,0,0). If False, big-endian is
+            used.
     Returns:
         interpolated: (n_points, ...) interpolated values at the points
     """
@@ -77,12 +86,17 @@ def normalize_to_voxel_unit_cube(
     Returns:
         p: (n_points, 3) coordinates of the points relative to the voxel, in [0, 1]^3
     """
-    # voxel_sizes==0 means the voxel does not exist (caller indexed an out-of-bounds
-    # voxel_indices=-1 entry that wrapped to a zero-initialized buffer row). Clamp to
-    # avoid div-by-zero -> inf -> NaN in finite-difference gradients; callers mask out
-    # these positions in the loss anyway.
-    safe_sizes = voxel_sizes.clamp(min=1)
-    p = (points - voxel_centers) / (safe_sizes * resolution) + 0.5  # (n_points, 3)
+    # voxel_sizes==0 means the voxel does not exist (caller indexed an out-of-bounds voxel_indices=-1 entry that
+    # wrapped to a zero-initialized buffer row). Clamp to avoid div-by-zero -> inf -> NaN in finite-difference
+    # gradients; callers mask out these positions in the loss anyway.
+    # Comment out the following line because the C++ implementation try to ensure that voxel_indices=-1 entries have
+    # size=1, so that the output will be finite and the gradients will not be NaN.
+    # One known possible way to get zero voxel size is stale voxel_indices that pick a removed voxel, which is set to
+    # size=0 in the C++ implementation.
+    # If we get NaN, we may want to check if there are stale voxel_indices.
+    # safe_sizes = voxel_sizes.clamp(min=1)
+
+    p = (points - voxel_centers) / (voxel_sizes * resolution) + 0.5  # (n_points, 3)
     return p
 
 
@@ -107,8 +121,14 @@ def ga_trilinear(
         vertex_values: (n_points, 8) values at the 8 vertices of the voxel containing each point
         vertex_grad: (n_points, 8, 3) gradient vectors at the 8 vertices of the voxel containing each point
         gradient_augmentation: bool, whether to use gradient-augmented trilinear interpolation
-        little_endian: bool, whether the vertex ordering is little-endian. e.g. 1->(1,0,0). If False, big-endian is used.
-        voxel_offsets: (n_points, 3) coordinates of the points relative to the voxel, in [0, 1]^3. If None, they will be computed.
+        little_endian: bool, whether the vertex ordering is little-endian. e.g. 1->(1,0,0).
+            If False, big-endian is used.
+        voxel_offsets: (n_points, 3) coordinates of the points relative to the voxel, in [0, 1]^3.
+            If None, they will be computed.
+
+    Returns:
+        results: (n_points,) interpolated scalar values at the query points.
+        voxel_offsets: (n_points, 3) the in-voxel offsets actually used (echoed back so the caller can reuse them).
     """
 
     if gradient_augmentation:
@@ -122,5 +142,5 @@ def ga_trilinear(
 
     if voxel_offsets is None:
         voxel_offsets = normalize_to_voxel_unit_cube(points, voxel_centers, voxel_sizes, resolution)  # (n_points, 3)
-    results = trilinear_interpolation(voxel_offsets, per_point_vertex_values, little_endian=little_endian)  # (n_points,)
+    results = trilinear_interpolation(voxel_offsets, per_point_vertex_values, little_endian=little_endian)
     return results, voxel_offsets

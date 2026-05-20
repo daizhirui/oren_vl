@@ -21,6 +21,16 @@ class DataLoader(Dataset):
         bound_min: Optional[torch.Tensor] = None,
         bound_max: Optional[torch.Tensor] = None,
     ):
+        """Construct a Newer College LiDAR loader and pre-load GT poses.
+
+        Args:
+            data_path: directory containing `ply/*.ply`, `gt-mesh.ply`, and `traj.txt`.
+            min_depth: minimum range in meters; points closer than this are dropped.
+            max_depth: maximum range in meters; points farther than this are dropped. Use -1 to disable.
+            apply_bound: if True, crop each returned frame to `[bound_min, bound_max]` in world coordinates.
+            bound_min: optional (3,) lower bound; if None, computed from the scene's GT mesh.
+            bound_max: optional (3,) upper bound; if None, computed from the scene's GT mesh.
+        """
         data_path = osp.expanduser(data_path)
         data_path = osp.abspath(data_path)
         data_path = data_path.rstrip("/")
@@ -46,6 +56,14 @@ class DataLoader(Dataset):
         self.gt_pose = self.load_gt_pose()
 
     def get_init_pose(self, init_frame=None):
+        """Return the initial sensor-to-world pose used to seed the trainer.
+
+        Args:
+            init_frame: optional frame index whose GT pose should be used; defaults to frame 0.
+
+        Returns:
+            pose: (4, 4) sensor-to-world pose, or `np.eye(4)` if no GT trajectory is loaded.
+        """
         if self.gt_pose is not None and init_frame is not None:
             return self.gt_pose[init_frame].reshape(4, 4)
         elif self.gt_pose is not None:
@@ -60,6 +78,14 @@ class DataLoader(Dataset):
         return gt_pose
 
     def load_pointcloud(self, index) -> torch.Tensor:
+        """Load one Newer College LiDAR scan and filter points by range.
+
+        Args:
+            index: scan index (zero-based) matching the `ply/{index:04d}.ply` filename.
+
+        Returns:
+            pointcloud: (N, 3) float tensor of sensor-frame points within `[min_depth, max_depth]`.
+        """
         ply_path = osp.join(self.data_path, "ply/{:04d}.ply".format(index))
         pcd = o3d.io.read_point_cloud(ply_path)
         pointcloud = torch.from_numpy(np.asarray(pcd.points)).float()
@@ -89,6 +115,16 @@ class DataLoader(Dataset):
 
 
 def compute_bound(data_path: str, max_depth: float) -> tuple[torch.Tensor, torch.Tensor]:
+    """Sweep every scan and compute the AABB of all world-frame LiDAR points.
+
+    Args:
+        data_path: Newer College scene directory passed to `DataLoader`.
+        max_depth: maximum range filter applied per scan; -1 disables.
+
+    Returns:
+        bound_min: (3,) minimum xyz observed across all scans.
+        bound_max: (3,) maximum xyz observed across all scans.
+    """
     loader = DataLoader(data_path, max_depth)
     bound_min = []
     bound_max = []

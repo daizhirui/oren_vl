@@ -90,6 +90,15 @@ namespace erl::geometry {
         [[nodiscard]] const QuadtreeKeyVector &
         GetVertexKeys() const;
 
+        /**
+         * Live high-water mark of the continuous node buffer. All live node indices live in
+         * [0, GetBufHead()), and any slot in that range that is not in the recycled set is a live
+         * node. Use this to slice the (parents/children/voxels/voxel_centers/vertices) buffers down
+         * to their used prefix.
+         */
+        [[nodiscard]] NodeIndex
+        GetBufHead() const;
+
         Eigen::VectorX<NodeIndex>
         InsertPoints(const Matrix2X &points);
 
@@ -119,6 +128,21 @@ namespace erl::geometry {
 
         [[nodiscard]] NodeIndex
         FindVoxelIndex(const QuadtreeKey &key) const;
+
+    protected:
+        //-- file IO
+        /**
+         * Read the tree topology and side-buffer state from a binary stream. Called by
+         * AbstractQuadtree::Read after the tree has been Clear()ed and the setting applied.
+         */
+        std::istream &
+        ReadData(std::istream &s) override;
+
+        /**
+         * Write the tree topology and side-buffer state to a binary stream.
+         */
+        std::ostream &
+        WriteData(std::ostream &s) const override;
 
     private:
         NodeIndex

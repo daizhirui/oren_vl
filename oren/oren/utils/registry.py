@@ -10,6 +10,15 @@ def get_identifier(cls):
 
 
 def list_registered_classes(registry: dict, print_table: bool = False):
+    """List all (identifier, class) pairs in a registry, optionally printing them as a table.
+
+    Args:
+        registry: Mapping of identifier string to class object.
+        print_table: If True, print a PrettyTable summary of the registry.
+
+    Returns:
+        List of (identifier, class) tuples in registry order.
+    """
     cells = []
     for identifier, cls in registry.items():
         cells.append((identifier, cls))
@@ -26,6 +35,14 @@ def list_registered_classes(registry: dict, print_table: bool = False):
 
 
 def register_model(cls):
+    """Register a model class in the global model registry under its fully-qualified identifier.
+
+    Args:
+        cls: Model class to register.
+
+    Returns:
+        The same class, so this can be used as a decorator.
+    """
     identifier = get_identifier(cls)
     if identifier in models:
         raise ValueError(f"Model {identifier} is already registered.")
@@ -44,6 +61,14 @@ def list_models(print_table: bool = False):
 
 
 def register_criterion(cls):
+    """Register a criterion class in the global criterion registry under its fully-qualified identifier.
+
+    Args:
+        cls: Criterion class to register.
+
+    Returns:
+        The same class, so this can be used as a decorator.
+    """
     identifier = get_identifier(cls)
     if identifier in criterions:
         raise ValueError(f"Criterion {identifier} is already registered.")
@@ -62,6 +87,14 @@ def list_criterions(print_table: bool = False):
 
 
 def register_trainer(cls):
+    """Register a trainer class in the global trainer registry under its fully-qualified identifier.
+
+    Args:
+        cls: Trainer class to register.
+
+    Returns:
+        The same class, so this can be used as a decorator.
+    """
     identifier = get_identifier(cls)
     if identifier in trainers:
         raise ValueError(f"Trainer {identifier} is already registered.")

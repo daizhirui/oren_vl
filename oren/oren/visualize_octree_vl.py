@@ -28,7 +28,15 @@ class VisualizeOctreeConfig(ConfigABC):
 
 
 def per_voxel_features(vertex_indices: torch.Tensor, implicit_features: torch.Tensor) -> torch.Tensor:
-    """Average implicit features over the (up to 8) valid vertices of each voxel."""
+    """Average implicit features over the (up to 8) valid vertices of each voxel.
+
+    Args:
+        vertex_indices: (V, 8) int tensor of per-voxel vertex ids, with -1 marking absent slots.
+        implicit_features: (Vmax, C) per-vertex feature tensor indexed by ``vertex_indices``.
+
+    Returns:
+        (V, C) tensor of per-voxel mean features over the valid vertex slots.
+    """
     valid = vertex_indices >= 0  # (V, 8)
     safe = torch.where(valid, vertex_indices, torch.zeros_like(vertex_indices)).long()
     vert_feats = implicit_features[safe]  # (V, 8, C)
@@ -38,7 +46,16 @@ def per_voxel_features(vertex_indices: torch.Tensor, implicit_features: torch.Te
 
 
 def make_voxel_cubes_mesh(centers: np.ndarray, sizes_m: np.ndarray, colors: np.ndarray) -> o3d.geometry.TriangleMesh:
-    """Build a single TriangleMesh with one cube per voxel, vertex-colored."""
+    """Build a single TriangleMesh with one cube per voxel, vertex-colored.
+
+    Args:
+        centers: (V, 3) per-voxel center coordinates in meters.
+        sizes_m: (V,) per-voxel side lengths in meters.
+        colors: (V, 3) RGB triples in [0, 1] applied uniformly to each cube's 8 vertices.
+
+    Returns:
+        Open3D TriangleMesh with 8*V vertices, 12*V triangles, and per-vertex colors.
+    """
     V = centers.shape[0]
     base_v = np.array(
         [
@@ -79,6 +96,11 @@ def make_voxel_cubes_mesh(centers: np.ndarray, sizes_m: np.ndarray, colors: np.n
 
 
 def main(cfg: VisualizeOctreeConfig) -> None:
+    """Load an octree state, PCA-color its VL features per voxel, and render / save the result.
+
+    Args:
+        cfg: Visualization configuration with the input octree path and optional save / interactive flags.
+    """
     assert cfg.octree_path is not None, "VisualizeOctreeConfig.octree_path is required"
 
     state = torch.load(cfg.octree_path, map_location="cpu", weights_only=False)

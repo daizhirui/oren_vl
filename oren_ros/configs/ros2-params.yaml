@@ -34,6 +34,8 @@
         frame_queue_maxsize: 32
         idle_block_sec: 0.0             # >0 -> __getitem__ returns None after idle so the
                                         # trainer can keep optimizing existing keyframes
+        publish_pointcloud: false       # whether to publish the current pointcloud in world frame as a ROS topic for visualization
+        track_bound: false              # whether to track the boundary of observed points and print it to log
 
         # --- Topic configuration ---
         # Each entry is a RosTopicParam: `path` plus the full QoS profile. Only

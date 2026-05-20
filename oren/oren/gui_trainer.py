@@ -19,6 +19,14 @@ from oren.trainer_config import TrainerConfig
 
 class GuiTrainer:
     def __init__(self, gui_cfg: GuiBaseConfig, trainer_cfg: TrainerConfig, copy_scene_bound_to_gui: bool):
+        """Wire the SDF trainer to a separate GUI process via two `mp.Queue`s and register callbacks.
+
+        Args:
+            gui_cfg: configuration for the Open3D GUI process.
+            trainer_cfg: configuration for the underlying `SdfTrainer`.
+            copy_scene_bound_to_gui: if True, copy `trainer_cfg.bound_min/max` into `gui_cfg.scene_bound_min/max`
+                before launching the GUI.
+        """
         self.gui_cfg = gui_cfg
         self.trainer_cfg = trainer_cfg
 
@@ -57,12 +65,17 @@ class GuiTrainer:
 
         self.thread_after_training_end = threading.Thread(target=self.after_training_end)
 
-        # psutil.Process().cpu_percent() needs a prior call to establish a baseline; the first
-        # measurement after this prime returns the average over the elapsed interval.
+        # psutil.Process().cpu_percent() needs a prior call to establish a baseline; the first measurement after this
+        # prime returns the average over the elapsed interval.
         self._psutil_proc = psutil.Process()
         self._psutil_proc.cpu_percent(interval=None)
 
     def training_iteration_end_callback(self, trainer: SdfTrainer):
+        """Forward per-iteration timing, loss, and resource stats to the GUI and block until it replies.
+
+        Args:
+            trainer: the active `SdfTrainer` whose stats are being reported.
+        """
         # send iteration results to GUI
         data_packet = GuiDataPacket()
         data_packet.time_stats = trainer.get_time_stats()
@@ -90,6 +103,15 @@ class GuiTrainer:
         self.reply_gui(data_packet, must_reply=True)
 
     def training_frame_start_callback(self, trainer: SdfTrainer, frame: Frame):
+        """Notify the GUI about a new training frame and block until it allows mapping to proceed.
+
+        Args:
+            trainer: the active `SdfTrainer`.
+            frame: the incoming `Frame` whose pose and points are forwarded to the GUI.
+
+        Returns:
+            keep_running: False if the GUI has been closed, True otherwise.
+        """
         # send new frame info to GUI
         data_packet = GuiDataPacket()
         data_packet.flag_new_frame = True
@@ -108,6 +130,11 @@ class GuiTrainer:
         return not self.control_packet.flag_gui_closed
 
     def training_end_callback(self, trainer: SdfTrainer):
+        """Tell the GUI that mapping has finished and start the post-training keep-alive thread.
+
+        Args:
+            trainer: the active `SdfTrainer` (unused but kept for callback signature compatibility).
+        """
         data_packet = GuiDataPacket()
         data_packet.mapping_end = True
         self.queue_to_gui.put_nowait(data_packet)
@@ -115,6 +142,7 @@ class GuiTrainer:
         self.thread_after_training_end.start()
 
     def after_training_end(self):
+        """Background thread loop: keep replying to the GUI with `mapping_end=True` until it closes."""
         tqdm.write("[After Training] Training finished. Waiting for GUI to close...")
         assert self.queue_from_gui is not None
         while True:
@@ -154,6 +182,15 @@ class GuiTrainer:
         return packet
 
     def reply_gui(self, data_packet: Optional[GuiDataPacket] = None, must_reply: bool = False):
+        """Drain pending control packets, lazily compute requested visualizations, and reply to the GUI.
+
+        Optionally appends sampled points, octree voxels, an SDF slice, an SDF grid, and a saved-model path
+        to `data_packet` based on the latest `GuiControlPacket`, then puts it on the outbound queue.
+
+        Args:
+            data_packet: optional outgoing packet to enrich; a fresh one is allocated if None.
+            must_reply: if True, always send a reply at least once even if no data was added.
+        """
         if self.queue_from_gui is None:
             return
 
@@ -248,7 +285,6 @@ class GuiTrainer:
                 data_packet.sdf_slice_position = self.control_packet.sdf_slice_position
                 data_packet.sdf_slice_resolution = self.control_packet.sdf_slice_resolution
                 data_packet.sdf_slice = dict(
-                    voxel_indices=results["voxel_indices"].cpu().numpy(),
                     sdf_prior=results["sdf_prior"].cpu().numpy(),
                     sdf_residual=results["sdf_residual"].cpu().numpy(),
                     sdf=results["sdf"].cpu().numpy(),
@@ -297,7 +333,6 @@ class GuiTrainer:
                     data_packet.sdf_grid_bounds = results["grid_bound"].cpu().tolist()
                     data_packet.sdf_grid_resolution = self.control_packet.sdf_grid_resolution
                     data_packet.sdf_grid = dict(
-                        voxel_indices=results["voxel_indices"].numpy(),
                         sdf_prior=results["sdf_prior"].numpy(),
                         sdf=results["sdf"].numpy(),
                     )
@@ -342,6 +377,7 @@ class GuiTrainer:
             tqdm.write(f"[Training] Failed to send flag_exit to GUI queue: {e}")
 
     def run(self):
+        """Start the GUI process, run training to completion, and tear down queues + process cleanly."""
         self.gui_process.start()
         self.control_packet = self.queue_from_gui.get(block=True)  # wait for GUI to be ready
 
@@ -375,9 +411,8 @@ class GuiTrainer:
             tqdm.write("[Training] GUI process exited.")
 
             # Cleanup queues
-            # Note: this is very important because each mp.Queue creates a background thread,
-            # which may block the program from exiting when the queue is not empty and no process
-            # is consuming from it.
+            # Note: this is very important because each mp.Queue creates a background thread, which may block the
+            # program from exiting when the queue is not empty and no process is consuming from it.
             while not self.queue_from_gui.empty():
                 try:
                     self.queue_from_gui.get_nowait()
@@ -403,6 +438,7 @@ class GuiTrainer:
 
 
 def main():
+    """CLI entry: parse GUI + trainer configs and launch a `GuiTrainer`."""
     mp.set_start_method("spawn")
 
     parser = argparse.ArgumentParser()

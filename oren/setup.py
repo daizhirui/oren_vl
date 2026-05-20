@@ -16,7 +16,7 @@ def _collect_configs():
 
 setup(
     name=package_name,
-    version="0.1",
+    version="0.2.0",
     author="Zhirui Dai, Qihao Qian",
     author_email="zhdai@ucsd.edu, q2qian@ucsd.edu",
     description="Gradient-augmented octree + neural residual SDF reconstruction (algorithm package)",

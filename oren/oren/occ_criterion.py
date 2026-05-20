@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Literal, Optional
+from typing import Literal
 
 import torch
 import torch.nn as nn
@@ -9,7 +9,7 @@ from oren.utils.config_abc import ConfigABC
 from oren.utils.registry import register_criterion
 
 
-def _masked_mean(values: torch.Tensor, mask: Optional[torch.Tensor]) -> torch.Tensor:
+def _masked_mean(values: torch.Tensor, mask: torch.Tensor | None) -> torch.Tensor:
     if mask is None:
         return values.mean()
     weights = mask.to(values.dtype)
@@ -18,8 +18,8 @@ def _masked_mean(values: torch.Tensor, mask: Optional[torch.Tensor]) -> torch.Te
 
 @dataclass
 class OccCriterionConfig(ConfigABC):
-    # Target value (in probability space) for the on-surface sample. 1.0 treats the surface as the
-    # inside boundary; 0.5 treats it as the decision boundary.
+    # Target value (in probability space) for the on-surface sample. 1.0 treats the surface as the inside boundary;
+    # 0.5 treats it as the decision boundary.
     surface_target: float = 1.0
 
     # Surface (occupied, target=surface_target) - single sample at depth.
@@ -30,8 +30,8 @@ class OccCriterionConfig(ConfigABC):
     free_loss_weight: float = 1.0
     free_loss_prior_weight: float = 1.0
 
-    # Behind-surface samples (positive-perturbation half of perturbed samples). Ambiguous on thin
-    # objects, so the loss form is configurable.
+    # Behind-surface samples (positive-perturbation half of perturbed samples). Ambiguous on thin objects, so the loss
+    # form is configurable.
     occ_loss_weight: float = 1.0
     occ_loss_prior_weight: float = 1.0
     # "bce":   BCE(logit, 1) - trust the label.
@@ -42,9 +42,9 @@ class OccCriterionConfig(ConfigABC):
     # 1.0 -> p=0.73, 2.0 -> p=0.88.
     occ_loss_hinge_margin: float = 1.0
 
-    # Field smoothness regularizer. For each sample point x the trainer also evaluates
-    # pred_occ at x + eps (random eps in [-smoothness_eps, +smoothness_eps]^3) and we penalize
-    # (pred_occ(x) - pred_occ(x+eps))^2. 0 disables the term entirely.
+    # Field smoothness regularizer. For each sample point x the trainer also evaluates pred_occ at x + eps (random eps
+    # in [-smoothness_eps, +smoothness_eps]^3) and we penalize (pred_occ(x) - pred_occ(x+eps))^2. 0 disables the term
+    # entirely.
     smoothness_weight: float = 0.0
     smoothness_eps: float = 0.005
 
@@ -59,44 +59,62 @@ class OccCriterion(nn.Module):
         [n_stratified+n_perturbed_neg : n_stratified+n_perturbed]      positive perturbations, behind surface (handled by occ_loss_mode)
         [-1]                                                           on-surface sample (target = surface_target)
 
-    The split between negative and positive perturbations also matches positive_perturbation_mask
-    (False for the first n_perturbed_neg, True for the next n_perturbed_pos).
+    The split between negative and positive perturbations also matches positive_perturbation_mask (False for the first
+    n_perturbed_neg, True for the next n_perturbed_pos).
     """
 
     needs_grad = False  # criterion does not need gradients w.r.t. the input positions
 
-    def __init__(self, cfg: OccCriterionConfig, n_stratified: int, n_perturbed: int) -> None:
+    def __init__(self, cfg: OccCriterionConfig) -> None:
+        """Construct the OCC criterion.
+
+        Args:
+            cfg: criterion configuration (loss weights, surface target, smoothness, occ-loss mode).
+        """
         super().__init__()
         self.cfg = cfg
-        self.n_stratified = n_stratified
-        self.n_perturbed = n_perturbed
+
+        self.n_stratified: int = -1
+        self.n_perturbed: int = -1
         self.bce = nn.BCEWithLogitsLoss(reduction="none")
 
-        self.mask_surface: Optional[torch.Tensor] = None
-        self.mask_strat: Optional[torch.Tensor] = None
-        self.mask_neg_pert: Optional[torch.Tensor] = None
-        self.mask_pos_pert: Optional[torch.Tensor] = None
+        self.mask_surface: torch.Tensor | None = None
+        self.mask_strat: torch.Tensor | None = None
+        self.mask_neg_pert: torch.Tensor | None = None
+        self.mask_pos_pert: torch.Tensor | None = None
 
     def forward(
         self,
         pred_occ: torch.Tensor,
         pred_prior: torch.Tensor,
         positive_perturbation_mask: torch.Tensor,
-        valid_mask: Optional[torch.Tensor] = None,
-        pred_occ_perturb: Optional[torch.Tensor] = None,
+        n_stratified: int,
+        n_perturbed: int,
+        valid_mask: torch.Tensor | None = None,
+        pred_occ_perturb: torch.Tensor | None = None,
     ):
         """
         Args:
             pred_occ: (B, N) final occupancy logits (prior + residual).
             pred_prior: (B, N) prior occupancy logits.
             positive_perturbation_mask: (B, n_perturbed) True for samples behind the surface.
+            n_stratified: number of stratified free-space samples per ray (slice [: n_stratified]).
+            n_perturbed: number of perturbed samples per ray (slice [n_stratified : n_stratified + n_perturbed]).
             valid_mask: (B, N) optional boolean mask. False entries are excluded from every reduction.
             pred_occ_perturb: (B, N) optional occupancy logits at x + eps used by the smoothness term.
+
+        Returns:
+            loss: scalar weighted-sum loss tensor.
+            loss_dict: per-term breakdown (Python floats) plus a `total_loss` entry.
         """
+        # Cache for the helpers (_free_loss, _occ_loss) that slice by these counts.
+        self.n_stratified = n_stratified
+        self.n_perturbed = n_perturbed
+
         B, N = pred_occ.shape
-        assert N == self.n_stratified + self.n_perturbed + 1, (
-            f"Expected last dim {self.n_stratified + self.n_perturbed + 1}, got {N}"
-        )
+        assert (
+            N == self.n_stratified + self.n_perturbed + 1
+        ), f"Expected last dim {self.n_stratified + self.n_perturbed + 1}, got {N}"
 
         n_strat = self.n_stratified
         n_pert = self.n_perturbed
@@ -163,6 +181,8 @@ class OccCriterion(nn.Module):
         return _masked_mean(per_elem, self.mask_surface)
 
     def _free_loss(self, logits: torch.Tensor) -> torch.Tensor:
+        # TODO: maybe separate stratified and perturbed samples instead of merging them? The latter are noisier but
+        # also more important to get right.
         logit_strat = logits[:, : self.n_stratified]
         logit_pert = logits[:, self.n_stratified : self.n_stratified + self.n_perturbed]
         per_strat = self.bce(logit_strat, torch.zeros_like(logit_strat))

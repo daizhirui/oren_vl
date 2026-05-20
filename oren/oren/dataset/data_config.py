@@ -21,9 +21,8 @@ class DataConfig(ConfigABC):
 
     def __post_init__(self):
         super().__post_init__()
-        # apply_bound, bound_min, bound_max are common config for dataset processing, we put
-        # them in the top-level config and also pass them to dataset_args for backward
-        # compatibility.
+        # apply_bound, bound_min, bound_max are common config for dataset processing, we put them in the top-level
+        # config and also pass them to dataset_args for backward compatibility.
 
         self.dataset_args["apply_bound"] = self.apply_bound
         self.dataset_args["bound_min"] = self.bound_min

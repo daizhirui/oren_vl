@@ -38,30 +38,40 @@ model:
         independent_smallest_leaf_vertex: false
         insertion_threshold: 3
         skip_insertion_if_exists: true
-        implicit_feature_dim: 3
-        implicit_num_levels: 1
-        enable_sdf: false
-        enable_occupancy: true
-        gradient_augmentation: false
-    residual_net_cfg:
-        cfg_identifier: oren.residual_net.ResidualNetConfig
-        mlp_activation: LeakyReLU
-        hidden_dims: [32, 32]
-        output_scale: 0.1
+    field:
+        cfg_identifier: oren.field_storage_config.FieldStorageConfig
+        name: occ
         output_dim: 1
-        implicit_feature_dim: 1 # will be overwritten by octree_cfg implicit_feature_dim * implicit_num_levels
+        mode: implicit
+        # explicit_prior_init: 0.0
+        # gradient_augmentation: false
+        implicit_feature_dim: 2
+        implicit_feature_level: 1
+        implicit_feature_aggregation: cat
+        shared_bank:
+        auxiliary_banks: []
+        implicit_net_cfg:
+            cfg_identifier: oren.implicit_net.ImplicitNetConfig
+            mlp_activation: LeakyReLU
+            hidden_dims: [32, 32]
+            normalization:
+            output_scale: 1.0
+            output_dim: 1
+            input_dim: 1 # overwritten at runtime by FieldStorage from the assembled head-input dim
 criterion_identifier: oren.occ_criterion.OccCriterion
 criterion:
     cfg_identifier: oren.occ_criterion.OccCriterionConfig
     surface_target: 1.0   # 1.0 -> p~0.73 inside; switch to 0.5 for decision-boundary semantics
     surface_loss_weight: 1.0
-    surface_loss_prior_weight: 1.0
+    surface_loss_prior_weight: 0.0
     free_loss_weight: 1.0
-    free_loss_prior_weight: 1.0
+    free_loss_prior_weight: 0.0
     occ_loss_weight: 1.0
-    occ_loss_prior_weight: 1.0
-    occ_loss_mode: hinge   # bce | hinge | off
+    occ_loss_prior_weight: 0.0
+    occ_loss_mode: bce   # bce | hinge | off
     occ_loss_hinge_margin: 1.0
+    smoothness_weight: 0.0
+    smoothness_eps: 0.01
 num_init_frames: 3
 init_frame_iterations: 10
 num_iterations_per_frame: 1

@@ -5,6 +5,13 @@ from torchvision import transforms
 
 class Extracter(Module):
     def __init__(self, clip_model_name="EVA02-L-14", clip_model_pretrained="merged2b_s4b_b131k", device="cuda"):
+        """Load an open_clip vision-language model and pick the forward-feature function for its trunk.
+
+        Args:
+            clip_model_name: open_clip model identifier (e.g. ``"EVA02-L-14"``).
+            clip_model_pretrained: open_clip pretrained-weights tag passed to ``create_model_and_transforms``.
+            device: Torch device the model is moved to after construction.
+        """
         super().__init__()
 
         self.clip_model_name = clip_model_name
@@ -31,13 +38,11 @@ class Extracter(Module):
         }
 
     def get_transform_and_intrinsics(self, image_width, image_height, fx, fy, cx, cy):
-        """
-        Computes new camera intrinsics for the feature map size based on the original intrinsics and image dimensions.
+        """Build the RGB/depth transforms for the model and rescale intrinsics into feature-pixel coordinates.
 
-        The function first calculates the scaling factors for width and height to fit the input image size required by
-        the model. It then determines the overall scaling factor to maintain the aspect ratio. If the new dimensions
-        exceed the input size, it calculates the necessary cropping and adjusts the principal point accordingly.
-        Finally, it returns the new camera intrinsics (fx, fy, cx, cy) for the feature map size.
+        Resizes to fit the model's input size while maintaining aspect ratio; if the resized dimensions exceed the
+        input, center-crops and shifts the principal point accordingly. Depth is then downsampled by ``patch_size``
+        to match the feature-map grid, and intrinsics are rescaled to feature-pixel coordinates.
 
         Args:
             image_width (int): Original image width.

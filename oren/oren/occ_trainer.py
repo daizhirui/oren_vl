@@ -1,5 +1,4 @@
 import os
-from typing import Optional
 
 import matplotlib
 
@@ -13,19 +12,30 @@ from oren.occ_criterion import OccCriterion
 from oren.occ_network import OccNetwork
 from oren.trainer_base import TrainerBase
 from oren.trainer_config import TrainerConfig
+from oren.utils.registry import get_identifier, register_trainer
 from oren.utils.sampling import generate_sdf_samples
-from oren.utils.registry import register_trainer
 
 
 @register_trainer
 class OccTrainer(TrainerBase):
-    """Trainer for OccNetwork. Binary-occupancy loss driven by depth ray-casting; no input
-    gradients are needed (criterion.needs_grad == False). Mesh/slice extraction goes through
-    OccEvaluator, which negates logits before marching cubes so the SDF-style sign convention
-    (positive = outside) drives the iso-surface."""
+    """Trainer for OccNetwork. Binary-occupancy loss driven by depth ray-casting; no input gradients are needed
+    (criterion.needs_grad == False). Mesh/slice extraction goes through OccEvaluator, which negates logits before
+    marching cubes so the SDF-style sign convention (positive = outside) drives the iso-surface."""
 
     model: OccNetwork
     criterion: OccCriterion
+    evaluator: OccEvaluator
+
+    def __init__(self, cfg: TrainerConfig, data_stream=None):
+        assert cfg.model_identifier == get_identifier(
+            OccNetwork
+        ), f"OccTrainer requires OccNetwork, got {cfg.model_identifier}"
+        assert cfg.criterion_identifier == get_identifier(
+            OccCriterion
+        ), f"OccTrainer requires OccCriterion, got {cfg.criterion_identifier}"
+        assert cfg.mode == "optimize", f"OccTrainer only supports optimize mode, got {cfg.mode}"
+
+        super().__init__(cfg, data_stream=data_stream)
 
     def _create_evaluator(self):
         return OccEvaluator(
@@ -36,7 +46,15 @@ class OccTrainer(TrainerBase):
             device=self.cfg.device,
         )
 
-    def train_with_frame(self, frame: Optional[Frame]):
+    def train_with_frame(self, frame: Frame | None):
+        """Run `num_iterations` occupancy training iterations against the selected key frames and `frame`.
+
+        Args:
+            frame: current Frame to also sample from; if None, only key-frame samples are used.
+
+        Returns:
+            True if training should continue, False if interrupted by `training_frame_start_callback`.
+        """
         self.num_iterations = self.cfg.num_iterations_per_frame
         if self.epoch < self.cfg.num_init_frames:
             self.num_iterations = self.cfg.init_frame_iterations
@@ -49,18 +67,18 @@ class OccTrainer(TrainerBase):
         with self.timer_select_key_frames:
             self.selected_key_frame_indices = self.key_frame_set.select_key_frames()
         with self.timer_sample_rays:
-            rays_o_all, rays_d_all, depth_samples_all = self.key_frame_set.sample_rays(
-                num_samples=self.cfg.num_rays_total,
+            rays_o_all, rays_d_all, depth_samples_all = self.key_frame_set.sample_by_num(
+                total_num_samples=self.cfg.num_rays_total,
+                sample_frame_fn=Frame.sample_rays,
                 key_frame_indices=self.selected_key_frame_indices,
                 current_frame=frame,
+                device=self.cfg.device,
             )
-            rays_o_all = rays_o_all.to(self.cfg.device)
-            rays_d_all = rays_d_all.to(self.cfg.device)
-            depth_samples_all = depth_samples_all.to(self.cfg.device)
 
             if self.cfg.extra_surface_sample:
-                self.extra_surface_pcd = self.key_frame_set.sample_points(
+                self.extra_surface_pcd = self.key_frame_set.sample_by_ratio(
                     ratio=1.0 / self.cfg.frame_downsample,
+                    sample_frame_fn=Frame.sample_points,
                     key_frame_indices=self.selected_key_frame_indices,
                     current_frame=frame,
                 )
@@ -94,49 +112,55 @@ class OccTrainer(TrainerBase):
 
         for _ in range(self.num_iterations):
             self.model.train()
-            with self.timer_training_iteration:
-                with torch.enable_grad():
-                    self.optimizer.zero_grad()
-                    occ_pred_all = []
-                    occ_prior_all = []
-                    occ_pred_perturb_all = [] if smoothness_weight > 0 else None
-                    for i in range(0, num_rays, bs):
-                        j = min(i + bs, num_rays)
-                        points = self.samples.sampled_xyz[i:j]  # (b, m, 3)
-                        voxel_indices_batch = voxel_indices[i:j]
-                        _, occ_prior, _, occ_pred = self.model(points, voxel_indices_batch)
-                        occ_pred_all.append(occ_pred)
-                        occ_prior_all.append(occ_prior)
+            with self.timer_training_iteration, torch.enable_grad():
+                self.optimizer.zero_grad()
+                occ_pred_all = []
+                occ_prior_all = []
+                occ_pred_perturb_all = [] if smoothness_weight > 0 else None
+                for i in range(0, num_rays, bs):
+                    j = min(i + bs, num_rays)
+                    points = self.samples.sampled_xyz[i:j]  # (b, m, 3)
+                    voxel_indices_batch = voxel_indices[i:j]
+                    out = self.model(points, voxel_indices_batch)
+                    occ_pred = out.pred.squeeze(-1)
+                    # Hybrid mode is the default; substitute zeros for prior when running in implicit-only mode so
+                    # the criterion's prior-based regularizers degrade to no-ops instead of crashing.
+                    occ_prior = out.prior.squeeze(-1) if out.prior is not None else torch.zeros_like(occ_pred)
+                    occ_pred_all.append(occ_pred)
+                    occ_prior_all.append(occ_prior)
 
-                        if smoothness_weight > 0:
-                            # Fresh ε per iteration, in metric coords; voxel indices are recomputed
-                            # because the perturbation may cross a leaf boundary.
-                            eps = (torch.rand_like(points) * 2 - 1) * smoothness_eps
-                            points_perturb = points + eps
-                            voxel_indices_perturb = self.find_voxel_indices(points_perturb)
-                            _, _, _, occ_pred_perturb = self.model(points_perturb, voxel_indices_perturb)
-                            occ_pred_perturb_all.append(occ_pred_perturb)
+                    if smoothness_weight > 0:
+                        # Fresh ε per iteration, in metric coords; voxel indices are recomputed because the
+                        # perturbation may cross a leaf boundary.
+                        eps = (torch.rand_like(points) * 2 - 1) * smoothness_eps
+                        points_perturb = points + eps
+                        voxel_indices_perturb = self.find_voxel_indices(points_perturb)
+                        out_perturb = self.model(points_perturb, voxel_indices_perturb)
+                        occ_pred_perturb = out_perturb.pred.squeeze(-1)
+                        occ_pred_perturb_all.append(occ_pred_perturb)
 
-                    if len(occ_pred_all) == 1:
-                        occ_pred_all = occ_pred_all[0]
-                        occ_prior_all = occ_prior_all[0]
-                        if smoothness_weight > 0:
-                            occ_pred_perturb_all = occ_pred_perturb_all[0]
-                    else:
-                        occ_pred_all = torch.cat(occ_pred_all, dim=0)
-                        occ_prior_all = torch.cat(occ_prior_all, dim=0)
-                        if smoothness_weight > 0:
-                            occ_pred_perturb_all = torch.cat(occ_pred_perturb_all, dim=0)
+                if len(occ_pred_all) == 1:
+                    occ_pred_all = occ_pred_all[0]
+                    occ_prior_all = occ_prior_all[0]
+                    if smoothness_weight > 0:
+                        occ_pred_perturb_all = occ_pred_perturb_all[0]
+                else:
+                    occ_pred_all = torch.cat(occ_pred_all, dim=0)
+                    occ_prior_all = torch.cat(occ_prior_all, dim=0)
+                    if smoothness_weight > 0:
+                        occ_pred_perturb_all = torch.cat(occ_pred_perturb_all, dim=0)
 
-                    loss, self.loss_dict = self.criterion(
-                        pred_occ=occ_pred_all,
-                        pred_prior=occ_prior_all,
-                        positive_perturbation_mask=self.samples.positive_perturbation_mask,
-                        valid_mask=mask,
-                        pred_occ_perturb=occ_pred_perturb_all,
-                    )
-                    loss.backward()
-                    self.optimizer.step()
+                loss, self.loss_dict = self.criterion(
+                    pred_occ=occ_pred_all,
+                    pred_prior=occ_prior_all,
+                    positive_perturbation_mask=self.samples.positive_perturbation_mask,
+                    n_stratified=self.cfg.sample_rays.n_stratified,
+                    n_perturbed=self.cfg.sample_rays.n_perturbed,
+                    valid_mask=mask,
+                    pred_occ_perturb=occ_pred_perturb_all,
+                )
+                loss.backward()
+                self.optimizer.step()
             self.global_step += 1
 
             self.logger.info(f"loss_dict: {self.loss_dict}")
@@ -151,11 +175,23 @@ class OccTrainer(TrainerBase):
         self,
         path: str,
         prior: bool = False,
-        bound_min: Optional[list] = None,
-        bound_max: Optional[list] = None,
-        grid_resolution: Optional[float] = None,
-        iso_value: Optional[float] = None,
+        bound_min: list | None = None,
+        bound_max: list | None = None,
+        grid_resolution: float | None = None,
+        iso_value: float | None = None,
     ) -> None:
+        """Extract and write a mesh of the occupancy (or occupancy prior) iso-surface.
+
+        Args:
+            path: target file name; treated as absolute if it starts with `/`, otherwise placed under the logger's
+                mesh directory.
+            prior: if True, extract the `occ_prior` field instead of the full `occ`.
+            bound_min: optional (3,) lower bound of the extraction grid; defaults to `cfg.bound_min`.
+            bound_max: optional (3,) upper bound of the extraction grid; defaults to `cfg.bound_max`.
+            grid_resolution: optional grid spacing; defaults to `cfg.mesh_resolution`.
+            iso_value: optional iso-value (in occupancy-logit sign) for marching cubes; defaults to
+                `cfg.mesh_iso_value`.
+        """
         field = "occ_prior" if prior else "occ"
         bound_min = bound_min if bound_min is not None else self.cfg.bound_min
         bound_max = bound_max if bound_max is not None else self.cfg.bound_max
@@ -177,8 +213,18 @@ class OccTrainer(TrainerBase):
         self.logger.info(f"Mesh ({field}) saved to {path}.")
 
     def query_occ(self, points: torch.Tensor, return_grad: bool = False, prior_only: bool = False) -> dict:
-        """Forward the model on the given points. Returns dict with occupancy logits and
-        (optional) gradients. Logits: positive=occupied, negative=free, zero=surface."""
+        """Forward the model on the given points. Returns dict with occupancy logits and (optional) gradients. Logits:
+        positive=occupied, negative=free, zero=surface.
+
+        Args:
+            points: (..., 3) world-coordinate query points.
+            return_grad: if True, compute gradients via autograd.
+            prior_only: if True, only evaluate the occupancy prior from the octree (skip the implicit head).
+
+        Returns:
+            dict with `voxel_indices`, `occ_prior`, `occ_residual`, `occ`, and (when `return_grad`) a nested `grad`
+            dict containing `occ_prior` and `occ` gradients.
+        """
         return self.evaluator.forward_model(
             self.model,
             points.to(self.cfg.device),
@@ -188,7 +234,13 @@ class OccTrainer(TrainerBase):
             device=self.cfg.device,
         )
 
-    def evaluate(self, epoch_dir: Optional[str] = None):
+    def evaluate(self, epoch_dir: str | None = None):
+        """Extract and persist evaluation artifacts (mesh + axis-aligned slice plots).
+
+        Args:
+            epoch_dir: optional sub-directory under the logger's misc/mesh folders to write artifacts into; if None,
+                artifacts are written at the top level.
+        """
         bound_min = self.cfg.bound_min
         bound_max = self.cfg.bound_max
 
@@ -204,8 +256,8 @@ class OccTrainer(TrainerBase):
                 self.logger.log_mesh(mesh_prior, f"{epoch_dir}/mesh_prior.ply")
                 self.logger.log_mesh(mesh, f"{epoch_dir}/mesh.ply")
             else:
-                self.logger.log_mesh(mesh_prior, f"mesh_prior.ply")
-                self.logger.log_mesh(mesh, f"mesh.ply")
+                self.logger.log_mesh(mesh_prior, "mesh_prior.ply")
+                self.logger.log_mesh(mesh, "mesh.ply")
 
         if self.cfg.save_slice:
             slice_configs = [

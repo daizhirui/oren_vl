@@ -22,6 +22,16 @@ class DataLoader(Dataset):
         bound_min: Optional[torch.Tensor] = None,
         bound_max: Optional[torch.Tensor] = None,
     ):
+        """Construct a Replica RGB-D loader and pre-load intrinsics / GT poses.
+
+        Args:
+            data_path: directory containing `results/depth*.png`, `results/frame*.jpg`, and `traj.txt`.
+            min_depth: minimum valid depth in meters; values below are zeroed.
+            max_depth: maximum valid depth in meters; values above are zeroed. Use -1 to disable.
+            apply_bound: if True, crop each returned frame to `[bound_min, bound_max]` in world coordinates.
+            bound_min: optional (3,) lower bound; if None, computed from the scene's GT mesh.
+            bound_max: optional (3,) upper bound; if None, computed from the scene's GT mesh.
+        """
         data_path = osp.expanduser(data_path)
         data_path = osp.abspath(data_path)
         data_path = data_path.rstrip("/")
@@ -50,6 +60,11 @@ class DataLoader(Dataset):
 
     @staticmethod
     def load_intrinsic():
+        """Return the hard-coded Replica pinhole intrinsics as a (3, 3) tensor.
+
+        Returns:
+            K: (3, 3) intrinsic matrix with fx = fy = 600, cx = 599.5, cy = 339.5.
+        """
         K = torch.eye(3)
         K[0, 0] = K[1, 1] = 600
         K[0, 2] = 599.5
@@ -58,6 +73,14 @@ class DataLoader(Dataset):
         return K
 
     def get_init_pose(self, init_frame=None):
+        """Return the initial camera-to-world pose used to seed the trainer.
+
+        Args:
+            init_frame: optional frame index whose GT pose should be used; defaults to frame 0.
+
+        Returns:
+            pose: (4, 4) camera-to-world pose, or `np.eye(4)` if no GT trajectory is loaded.
+        """
         if self.gt_pose is not None and init_frame is not None:
             return self.gt_pose[init_frame].reshape(4, 4)
         elif self.gt_pose is not None:
@@ -72,6 +95,14 @@ class DataLoader(Dataset):
         return gt_pose
 
     def load_depth(self, index) -> torch.Tensor:
+        """Load and convert a 16-bit Replica depth image to a metric float tensor.
+
+        Args:
+            index: frame index (zero-based) matching the `depth{index:06d}.png` filename.
+
+        Returns:
+            depth: (H, W) float depth in meters with out-of-range pixels zeroed.
+        """
         depth = cv2.imread(osp.join(self.data_path, "results/depth{:06d}.png".format(index)), -1)
         depth = depth / 6553.5
         if self.min_depth >= 0:
@@ -94,6 +125,16 @@ class DataLoader(Dataset):
 
 
 def compute_bound(data_path: str, max_depth: float) -> tuple[torch.Tensor, torch.Tensor]:
+    """Sweep every frame and compute the AABB of all unprojected world-frame points.
+
+    Args:
+        data_path: Replica scene directory passed to `DataLoader`.
+        max_depth: maximum depth filter applied per frame; -1 disables.
+
+    Returns:
+        bound_min: (3,) minimum xyz observed across all frames.
+        bound_max: (3,) maximum xyz observed across all frames.
+    """
     loader = DataLoader(data_path, max_depth)
     bound_min = []
     bound_max = []

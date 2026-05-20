@@ -20,3 +20,5 @@
     bool`); FieldStorage stays neutral (returns `prior`, `implicit`, `pred`).
     Default to one-way; revisit if prior-only convergence is too slow on a
     workload with sparse direct supervision.
+- [ ] For multi-level queries from the octree, a point may not get the exact requested level. Right now we return the finest level available, but when we concatenate features from multiple levels, we need to make sure we don't duplicate the same level's features.
+- [ ] Try position encoding (e.g., Fourier features): sin(2kπx) and cos(2kπx) for k in [1, K]. This is a common trick to help MLPs learn high-frequency functions of the input coordinates.

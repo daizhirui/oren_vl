@@ -36,7 +36,7 @@ from rclpy.duration import Duration
 from rclpy.node import Node
 from rclpy.time import Time
 from scipy.spatial.transform import Rotation
-from sensor_msgs.msg import Image, PointCloud2
+from sensor_msgs.msg import Image, PointCloud2, PointField
 
 from oren.frame import DepthFrame, Frame, LiDARFrame
 
@@ -61,6 +61,20 @@ class RosDataLoader:
         min_depth: float = 0.0,
         max_depth: float = -1.0,
     ):
+        """Declare ROS parameters and wire up sensor/odom subscriptions or a tf2 listener for pose lookup.
+
+        Args:
+            ros_node: rclpy node that owns the declared parameters, subscriptions, and timers.
+            apply_bound: If True, crop each frame to [bound_min, bound_max] before enqueuing.
+            bound_min: Optional 3-vector (meters) lower bound used when ``apply_bound`` is True.
+            bound_max: Optional 3-vector (meters) upper bound used when ``apply_bound`` is True.
+            intrinsics_fx: Depth camera focal length x in pixels (required for depth modality).
+            intrinsics_fy: Depth camera focal length y in pixels (required for depth modality).
+            intrinsics_cx: Depth camera principal point x in pixels (required for depth modality).
+            intrinsics_cy: Depth camera principal point y in pixels (required for depth modality).
+            min_depth: Minimum valid depth in meters; values below are masked out (negative disables).
+            max_depth: Maximum valid depth in meters; values above are masked out (<= 0 disables).
+        """
         self.node = ros_node
         self.apply_bound = apply_bound
         self.bound_min = bound_min
@@ -85,6 +99,7 @@ class RosDataLoader:
         self._depth_topic = RosTopicParam(path="/camera/depth")
         self._lidar_topic = RosTopicParam(path="/lidar/points")
         self._odom_topic = RosTopicParam(path="/odom")
+        self._pointcloud_topic = RosTopicParam(path="/dataloader/pointcloud")
 
         # ROS interface params (declared here, where they're used). Topic-name
         # / QoS params are declared by RosTopicParam in the modality branches
@@ -105,6 +120,10 @@ class RosDataLoader:
         # so the trainer can run train_with_frame(None) on existing keyframes.
         # 0 = block until a frame arrives or shutdown.
         ros_node.declare_parameter("idle_block_sec", 0.0)
+        # Whether to publish the current pointcloud+pose as a ROS topic for visualization.
+        ros_node.declare_parameter("publish_pointcloud", False)
+        # Whether to track the boundary of observed points
+        ros_node.declare_parameter("track_bound", False)
 
         self._modality = ros_node.get_parameter("modality").value
         self._depth_scale = float(ros_node.get_parameter("depth_scale").value)
@@ -115,6 +134,8 @@ class RosDataLoader:
         self._idle_block_sec = float(ros_node.get_parameter("idle_block_sec").value)
         self._world_frame = ros_node.get_parameter("world_frame").value
         self._sensor_frame = ros_node.get_parameter("sensor_frame").value
+        self._publish_pointcloud = bool(ros_node.get_parameter("publish_pointcloud").value)
+        self._track_bound = bool(ros_node.get_parameter("track_bound").value)
         maxsize = int(ros_node.get_parameter("frame_queue_maxsize").value)
 
         odom_type_str = ros_node.get_parameter("odom_msg_type").value
@@ -130,6 +151,8 @@ class RosDataLoader:
         self._shutdown = threading.Event()
         self._frame_count = 0
         self._last_msg_time: Optional[float] = None  # wall-clock seconds
+        self._track_bound_min = torch.full((3,), float("inf"), dtype=torch.float32) if self._track_bound else None
+        self._track_bound_max = torch.full((3,), float("-inf"), dtype=torch.float32) if self._track_bound else None
         self._lock = threading.Lock()
 
         # idle callback: invoked while __getitem__ is waiting for a frame
@@ -208,6 +231,19 @@ class RosDataLoader:
         else:
             raise ValueError(f"unknown modality: {self._modality!r} (expected 'depth' or 'lidar')")
 
+        self._pointcloud_pub = None
+        if self._publish_pointcloud:
+            self._resolve_topic_param(self._pointcloud_topic, "pointcloud_topic")
+            self._pointcloud_pub = ros_node.create_publisher(
+                PointCloud2,
+                self._pointcloud_topic.path,
+                self._pointcloud_topic.get_qos(),
+            )
+            ros_node.get_logger().info(
+                f"[RosDataLoader] publishing world-frame pointcloud to {self._pointcloud_topic.path} "
+                f"(frame_id={self._world_frame})"
+            )
+
         self._watchdog = None
         if self._no_data_timeout > 0:
             # 1 Hz watchdog
@@ -256,6 +292,9 @@ class RosDataLoader:
     def __getitem__(self, idx: int) -> Optional[Frame]:
         """Block until a frame is ready, transient idle expires, or shutdown.
 
+        Args:
+            idx: Sequence index (unused; the loader is streaming and yields whatever arrives next).
+
         Returns:
             Frame if one is available.
             None if either (a) `idle_block_sec` elapsed without a new frame, or
@@ -282,7 +321,7 @@ class RosDataLoader:
             self._last_msg_time = time.monotonic()
             depth = _image_to_depth_tensor(img_msg, self._depth_scale)
             pose = _odom_msg_to_matrix(odom_msg)
-            self._enqueue_depth(depth, pose)
+            self._enqueue_depth(depth, pose, img_msg.header.stamp)
         except Exception as e:
             self.node.get_logger().error(f"[RosDataLoader] _on_synced_depth: {e}")
 
@@ -291,7 +330,7 @@ class RosDataLoader:
             self._last_msg_time = time.monotonic()
             points = _cloud_to_xyz_tensor(cloud_msg)
             pose = _odom_msg_to_matrix(odom_msg)
-            self._enqueue_lidar(points, pose)
+            self._enqueue_lidar(points, pose, cloud_msg.header.stamp)
         except Exception as e:
             self.node.get_logger().error(f"[RosDataLoader] _on_synced_lidar: {e}")
 
@@ -304,7 +343,7 @@ class RosDataLoader:
             if pose is None:
                 return
             depth = _image_to_depth_tensor(msg, self._depth_scale)
-            self._enqueue_depth(depth, pose)
+            self._enqueue_depth(depth, pose, msg.header.stamp)
         except Exception as e:
             self.node.get_logger().error(f"[RosDataLoader] _depth_tf_cb: {e}")
 
@@ -315,7 +354,7 @@ class RosDataLoader:
             if pose is None:
                 return
             points = _cloud_to_xyz_tensor(msg)
-            self._enqueue_lidar(points, pose)
+            self._enqueue_lidar(points, pose, msg.header.stamp)
         except Exception as e:
             self.node.get_logger().error(f"[RosDataLoader] _lidar_tf_cb: {e}")
 
@@ -344,7 +383,7 @@ class RosDataLoader:
 
     # ------------------------------- internals ----------------------------------
 
-    def _enqueue_depth(self, depth: torch.Tensor, pose: torch.Tensor) -> None:
+    def _enqueue_depth(self, depth: torch.Tensor, pose: torch.Tensor, stamp) -> None:
         with self._lock:
             self._frame_count += 1
             fid = self._frame_count
@@ -353,21 +392,71 @@ class RosDataLoader:
             depth=depth,
             intrinsic=self.intrinsics,
             ref_pose=pose,
-            min_depth=self.min_depth if self.min_depth >= 0 else None,
-            max_depth=self.max_depth if self.max_depth > 0 else None,
+            min_range=self.min_depth if self.min_depth >= 0 else None,
+            max_range=self.max_depth if self.max_depth > 0 else None,
         )
         if self.apply_bound:
             frame.apply_bound(self.bound_min, self.bound_max)
+        self._post_frame_hooks(frame, stamp)
         self._enqueue(frame)
 
-    def _enqueue_lidar(self, points: torch.Tensor, pose: torch.Tensor) -> None:
+    def _enqueue_lidar(self, points: torch.Tensor, pose: torch.Tensor, stamp) -> None:
         with self._lock:
             self._frame_count += 1
             fid = self._frame_count
         frame = LiDARFrame(fid=fid, pointcloud=points, ref_pose=pose)
         if self.apply_bound:
             frame.apply_bound(self.bound_min, self.bound_max)
+        self._post_frame_hooks(frame, stamp)
         self._enqueue(frame)
+
+    def _post_frame_hooks(self, frame: Frame, stamp) -> None:
+        # World-frame points are needed by both the visualization publisher and
+        # the bound tracker; compute once and share. Skip the get_points() call
+        # entirely when both hooks are disabled.
+        if self._pointcloud_pub is None and not self._track_bound:
+            return
+        points = frame.get_points(to_world_frame=True, device="cpu")
+        if self._pointcloud_pub is not None:
+            self._publish_pointcloud_msg(points, stamp)
+        if self._track_bound and points.numel() > 0:
+            self._update_tracked_bound(points)
+
+    def _publish_pointcloud_msg(self, points: torch.Tensor, stamp) -> None:
+        pts_np = points.detach().numpy().astype(np.float32, copy=False)
+        msg = PointCloud2()
+        msg.header.stamp = stamp
+        msg.header.frame_id = self._world_frame
+        msg.fields = [
+            PointField(name="x", offset=0, datatype=PointField.FLOAT32, count=1),
+            PointField(name="y", offset=4, datatype=PointField.FLOAT32, count=1),
+            PointField(name="z", offset=8, datatype=PointField.FLOAT32, count=1),
+        ]
+        msg.height = 1
+        msg.width = int(pts_np.shape[0])
+        msg.point_step = 12
+        msg.row_step = msg.point_step * msg.width
+        msg.is_bigendian = False
+        msg.is_dense = False
+        msg.data = pts_np.tobytes()
+        self._pointcloud_pub.publish(msg)
+
+    def _update_tracked_bound(self, points: torch.Tensor) -> None:
+        frame_min = points.amin(dim=0)
+        frame_max = points.amax(dim=0)
+        new_min = torch.minimum(self._track_bound_min, frame_min)
+        new_max = torch.maximum(self._track_bound_max, frame_max)
+        if torch.equal(new_min, self._track_bound_min) and torch.equal(new_max, self._track_bound_max):
+            return
+        self._track_bound_min = new_min
+        self._track_bound_max = new_max
+        b_min = new_min.tolist()
+        b_max = new_max.tolist()
+        self.node.get_logger().info(
+            f"[RosDataLoader] tracked bound grew: "
+            f"min=[{b_min[0]:.3f}, {b_min[1]:.3f}, {b_min[2]:.3f}] "
+            f"max=[{b_max[0]:.3f}, {b_max[1]:.3f}, {b_max[2]:.3f}]"
+        )
 
     def _enqueue(self, frame: Frame) -> None:
         try:

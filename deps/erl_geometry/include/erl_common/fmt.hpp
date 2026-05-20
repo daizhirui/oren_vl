@@ -69,7 +69,12 @@ public:
 
     template<typename FormatContext>
     auto
-    format(const Derived &mat, FormatContext &ctx) {
+    #if FMT_VERSION >= 90000
+    format(const Derived &mat, FormatContext &ctx) const
+    #else
+    format(const Derived &mat, FormatContext &ctx)
+    #endif
+    {
         auto out = ctx.out();
 
         for (Eigen::Index row = 0; row < mat.rows(); ++row) {

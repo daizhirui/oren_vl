@@ -24,11 +24,13 @@ class GuiBaseConfig(ConfigABC):
     scene_width: int = 2560
     scene_height: int = 1440
     panel_split_ratio: float = 0.7
-    objects_layout: list = field(default_factory=lambda: [
-        ["axis", "scan", "traj", "kf_cams", "curr_cam", "gt_mesh", "octree"],
-        ["sdf", "sdf_prior", "sdf_residual", "mesh", "mesh_prior"],
-        ["sample_surf", "sample_perturbed", "sample_free", "sample_extra"],
-    ])
+    objects_layout: list = field(
+        default_factory=lambda: [
+            ["axis", "scan", "traj", "kf_cams", "curr_cam", "gt_mesh", "octree"],
+            ["sdf", "sdf_prior", "sdf_residual", "mesh", "mesh_prior"],
+            ["sample_surf", "sample_perturbed", "sample_free", "sample_extra"],
+        ]
+    )
 
     view_option: str = "follow"  # follow, keyboard, from_file
     view_file: Optional[str] = None
@@ -191,6 +193,14 @@ class MarchingCubesResult:
 
 
 def marching_cubes_process(queue_in: mp.Queue, queue_out: mp.Queue):
+    """Worker process: pop `MarchingCubesTask`s from `queue_in`, run marching cubes, push results to `queue_out`.
+
+    Sending `None` on `queue_in` terminates the loop.
+
+    Args:
+        queue_in: input queue carrying `MarchingCubesTask` items (or `None` to stop).
+        queue_out: output queue that receives `MarchingCubesResult` items.
+    """
     tqdm.write("[Marching Cubes] Marching cubes process started.")
     mc = MarchingCubes()
     while True:
@@ -247,6 +257,25 @@ def octree_lineset_from_voxels(
     scene_bound_min=None,
     scene_bound_max=None,
 ):
+    """Build a deduplicated lineset of octree edges from per-voxel center, size, and vertex-index arrays.
+
+    Removes duplicate edges, optionally crops to a scene AABB, and drops short axis-aligned segments that are
+    completely overlapped by a longer collinear segment so that only the outermost edge per axis remains.
+
+    Args:
+        vertex_offsets: (1, 8, 3) unit-cube vertex offsets matching the octree's vertex ordering convention.
+        octree_voxel_lines: (12, 2) vertex-index pairs defining the 12 edges of a voxel.
+        voxel_vertices: (N, 8) global vertex IDs per voxel.
+        voxel_centers: (N, 3) voxel center positions in world coordinates.
+        voxel_sizes: (N, 1) voxel side lengths.
+        resolution: float; smallest voxel edge length, used to discretize coordinates for overlap detection.
+        scene_bound_min: optional (3,) lower scene bound; edges outside are dropped.
+        scene_bound_max: optional (3,) upper scene bound; edges outside are dropped.
+
+    Returns:
+        vertices_unique: (V, 3) deduplicated edge endpoints, or None if no edges remain.
+        lines: (M, 2) endpoint-index pairs into `vertices_unique`, or None if no edges remain.
+    """
     n_vertices = np.max(voxel_vertices) + 1
     vertices = voxel_centers.reshape(-1, 1, 3) + voxel_sizes.reshape(-1, 1, 1) * vertex_offsets
     vertices_unique = np.zeros((n_vertices, 3), dtype=np.float64)
@@ -328,6 +357,14 @@ class OctreeLinesetResult:
 
 
 def octree_lineset_process(queue_in: mp.Queue, queue_out: mp.Queue):
+    """Worker process: pop `OctreeLinesetTask`s, build linesets via `octree_lineset_from_voxels`, push results.
+
+    Sending `None` on `queue_in` terminates the loop.
+
+    Args:
+        queue_in: input queue carrying `OctreeLinesetTask` items (or `None` to stop).
+        queue_out: output queue that receives `OctreeLinesetResult` items.
+    """
     cut = np.array([-0.5, 0.5], dtype=np.float32)
     xx, yy, zz = np.meshgrid(cut, cut, cut, indexing="ij")  # big-endian
     octree_vertex_offsets = np.stack([xx, yy, zz], axis=-1).reshape(1, 8, 3)  # (1,8,3)
@@ -395,6 +432,15 @@ class VideoFrame:
 
 
 def video_writer_process(queue_in: mp.Queue, queue_out: mp.Queue):
+    """Worker process: open/close an OpenCV `VideoWriter` and write incoming RGB frames to disk.
+
+    Each `VideoFrame` on `queue_in` is either a start (open writer), end (close writer), or a frame payload.
+    Sending `None` closes the writer and exits.
+
+    Args:
+        queue_in: input queue carrying `VideoFrame` items (or `None` to stop).
+        queue_out: output queue used to acknowledge start/stop transitions.
+    """
     tqdm.write("[Video Writer] Video writer process started.")
 
     video_writer = None
@@ -453,6 +499,13 @@ def video_writer_process(queue_in: mp.Queue, queue_out: mp.Queue):
 class GuiBase:
 
     def __init__(self, cfg: GuiBaseConfig, queue_to_gui: mp.Queue = None, queue_from_gui: mp.Queue = None):
+        """Construct the GUI window, spawn worker subprocesses, and start the communicate thread.
+
+        Args:
+            cfg: GUI configuration (window size, default colors, scene bounds, optional GT mesh, etc.).
+            queue_to_gui: multiprocessing queue from which the GUI receives `GuiDataPacket`s.
+            queue_from_gui: multiprocessing queue to which the GUI publishes `GuiControlPacket`s.
+        """
         o3d_gui.Application.instance.initialize()
 
         self.cfg = cfg
@@ -2018,6 +2071,11 @@ class GuiBase:
         self.button_stop_video.enabled = False
 
     def visualize_scan(self, points: np.ndarray = None):
+        """Replace the current scan point cloud and update its scene visibility.
+
+        Args:
+            points: optional (N, 3) world-frame points; if None, only the visibility toggle is refreshed.
+        """
         if points is not None:
             points = points[:: self.cfg.scan_point_downsample].copy()  # copy to make it contiguous
             self.scan.points = o3d.utility.Vector3dVector(points.astype(np.float64))
@@ -2034,6 +2092,7 @@ class GuiBase:
         self.widget3d.scene.show_geometry(self.scan_name, self.checkbox_show_scan.checked)
 
     def visualize_trajectory(self):
+        """Append new frame positions to the trajectory polyline and refresh its scene visibility."""
         if len(self.traj.points) < len(self.frame_poses):
             points = np.stack([pose[:3, 3] for pose in self.frame_poses], axis=0)
             self.traj.points = o3d.utility.Vector3dVector(points.astype(np.float64))
@@ -2061,6 +2120,15 @@ class GuiBase:
         points: np.ndarray = None,
         color: list = None,
     ):
+        """Update one of the sample-point clouds (surface / perturbed / free / extra) and toggle its visibility.
+
+        Args:
+            name: scene geometry name used by the Open3D renderer.
+            pcd: persistent `PointCloud` whose points are mutated in place.
+            show: whether to show this sample cloud in the scene.
+            points: optional (..., 3) sample positions; downsampled per `cfg.sample_point_downsample`.
+            color: optional RGB triple in [0, 1] applied uniformly to the cloud (required if `points` is given).
+        """
         if points is not None:
             assert color is not None
             points = points.reshape(-1, 3)[:: self.cfg.sample_point_downsample].copy()
@@ -2078,6 +2146,12 @@ class GuiBase:
         self.widget3d.scene.show_geometry(name, show)
 
     def visualize_kf_cams(self, key_frame_indices: list = None, selected_key_frame_indices: list = None):
+        """Append camera frustums for any newly added key frames and recolor selected ones.
+
+        Args:
+            key_frame_indices: indices of all current key frames; new entries are appended to the lineset.
+            selected_key_frame_indices: indices (relative to `key_frame_indices`) drawn in the selected color.
+        """
         if key_frame_indices is not None and selected_key_frame_indices is not None:
             n = len(key_frame_indices) * len(self.org_cam.points)
             if len(self.kf_cams.points) < n:  # need to add more cameras
@@ -2106,6 +2180,11 @@ class GuiBase:
         self.widget3d.scene.show_geometry(self.kf_cams_name, self.checkbox_show_kf_cams.checked)
 
     def visualize_curr_cam(self, pose: np.ndarray = None):
+        """Move the current-frame camera frustum + axis to the given pose and refresh scene visibility.
+
+        Args:
+            pose: optional (4, 4) camera-to-world pose; if None, only the visibility toggle is refreshed.
+        """
         if pose is not None:  # update visualization only when new pose is given
             points = np.asarray(self.org_cam.points)
             points = points @ pose[:3, :3].T + pose[:3, [3]].T
@@ -2131,6 +2210,11 @@ class GuiBase:
         self.widget3d.scene.show_geometry(self.curr_cam_axis_name, self.checkbox_show_curr_cam.checked)
 
     def visualize_octree(self, force_update: bool = False):
+        """Drain up to two `OctreeLinesetResult`s and update the octree lineset in the scene.
+
+        Args:
+            force_update: if True, re-add the geometry to the scene even if no new linesets were processed.
+        """
         processed_octrees = 0
         max_octrees_per_call = 2  # Limit processing to prevent blocking
 
@@ -2172,6 +2256,18 @@ class GuiBase:
         resolution: float = None,
         sdf_values: np.ndarray = None,
     ):
+        """Rebuild a 2D axis-aligned SDF slice point cloud and toggle its scene visibility.
+
+        Args:
+            sdf_name: scene geometry name (e.g. SDF / SDF-prior / SDF-residual slice).
+            sdf_slice: persistent `PointCloud` whose points are mutated in place.
+            show: whether to show this slice in the scene.
+            bounds: ((min_x, min_y, min_z), (max_x, max_y, max_z)) extent of the slice plane.
+            axis: 0/1/2 axis perpendicular to the slice plane.
+            pos: coordinate of the slice along `axis`.
+            resolution: cell size used to generate the 2D grid of sample points.
+            sdf_values: 2D array of SDF values per grid cell, colorized with `cfg.sdf_color_map`.
+        """
         if (
             bounds is not None
             and axis is not None
@@ -2221,6 +2317,11 @@ class GuiBase:
         self.widget3d.scene.show_geometry(sdf_name, show)
 
     def colorize_mesh(self, mesh: o3d.geometry.TriangleMesh):
+        """Apply height-based vertex colors (using `cfg.mesh_height_color_map`) if that mode is enabled.
+
+        Args:
+            mesh: mesh whose `vertex_colors` are written in place; cleared if the mode is disabled.
+        """
         if mesh.is_empty():
             return
         if self.checkbox_mesh_color_by_height.checked:
@@ -2234,6 +2335,11 @@ class GuiBase:
             mesh.vertex_colors.clear()
 
     def remove_ceiling_from_mesh(self, mesh: o3d.geometry.TriangleMesh):
+        """Drop triangles whose maximum z is within `cfg.mesh_ceiling_thickness` of the mesh's z-max.
+
+        Args:
+            mesh: mesh modified in place by removing ceiling triangles.
+        """
         z_max = mesh.get_max_bound()[2]
         ceiling_thickness = self.cfg.mesh_ceiling_thickness
         vertices = np.asarray(mesh.vertices)
@@ -2243,6 +2349,11 @@ class GuiBase:
         mesh.remove_triangles_by_index(np.where(mask)[0].tolist())
 
     def visualize_mesh(self, force_update: bool = False):
+        """Drain up to five `MarchingCubesResult`s into the SDF and prior meshes and refresh scene visibility.
+
+        Args:
+            force_update: if True, re-add geometries to the scene even when no new meshes were processed.
+        """
         processed_meshes = 0
         processed_prior_meshes = 0
         max_meshes_per_call = 5  # Limit processing to prevent blocking
@@ -2299,6 +2410,7 @@ class GuiBase:
             self.widget3d.scene.show_geometry(self.mesh_prior_name, self.checkbox_show_mesh_by_prior.checked)
 
     def visualize_gt_mesh(self):
+        """Add or remove the ground-truth mesh from the scene based on its checkbox state."""
         if self.gt_mesh is None:
             return
 
@@ -2312,6 +2424,7 @@ class GuiBase:
         self.widget3d.scene.show_geometry(self.gt_mesh_name, self.checkbox_show_gt_mesh.checked)
 
     def set_camera(self):
+        """Resolve which camera-control mode is active (follow / keyboard / file) and apply it."""
         if self.checkbox_view_follow.checked:
             self.center_bev()
         elif self.checkbox_view_keyboard.checked:
@@ -2326,6 +2439,11 @@ class GuiBase:
         self.widget3d.setup_camera(90, bounds, bounds.get_center())  # type: ignore
 
     def set_view_from_file(self, path: str):
+        """Load camera intrinsics + extrinsics from a YAML view file and apply them to the 3D widget.
+
+        Args:
+            path: path to a YAML file with `intrinsics` (3x3) and `extrinsics` (4x4) entries.
+        """
         if not os.path.isfile(path):
             return
         # in the file, we have the projection matrix (4, 4),
@@ -2339,6 +2457,12 @@ class GuiBase:
 
     @classmethod
     def run(cls, *args, **kwargs):
+        """Construct an instance of `cls`, run the Open3D event loop, then call `cleanup` and quit.
+
+        Args:
+            *args: positional arguments forwarded to `cls.__init__`.
+            **kwargs: keyword arguments forwarded to `cls.__init__`.
+        """
         app = o3d_gui.Application.instance
         app.initialize()
         window = cls(*args, **kwargs)
@@ -2347,6 +2471,7 @@ class GuiBase:
         app.quit()
 
     def send_control_packet(self):
+        """Publish a `GuiControlPacket` reflecting the current widget state to the trainer process."""
         if self.queue_out is None:
             return
         try:
@@ -2381,6 +2506,14 @@ class GuiBase:
             tqdm.write(f"[GUI] Error sending control packet: {e}")
 
     def receive_data_packet(self, get_latest: bool = True):
+        """Drain up to ten queued data packets, merging their non-None fields into `self.data_packet`.
+
+        Args:
+            get_latest: if True, keep draining to absorb the most recent packet; if False, stop after one.
+
+        Returns:
+            packet: the last packet pulled from the queue, or None if the queue was empty.
+        """
         if self.queue_in is None:
             return None
         packet: Optional[GuiDataPacket] = None
@@ -2474,6 +2607,14 @@ class GuiBase:
             self.update(data_packet)
 
     def update(self, data_packet: Optional[GuiDataPacket] = None):
+        """Merge a new data packet into the GUI state and refresh every dependent widget and geometry.
+
+        Also forwards mesh / octree tasks to worker processes, and pushes a captured video frame if recording
+        is active.
+
+        Args:
+            data_packet: optional newly arrived packet to merge; the method also re-renders even without one.
+        """
         if self.data_packet.flag_exit:
             tqdm.write("[GUI] Received exit signal. Closing GUI...")
             self._send_flag_gui_closed()
@@ -2678,9 +2819,7 @@ class GuiBase:
 
             if self.data_packet.loss_stats is not None:
                 loss_stats = flatten_dict(self.data_packet.loss_stats)
-                self.label_info_loss.text = f"Loss:\n" + "\n".join(
-                    [f"  {k}: {v:.6f}" for k, v in loss_stats.items()]
-                )
+                self.label_info_loss.text = f"Loss:\n" + "\n".join([f"  {k}: {v:.6f}" for k, v in loss_stats.items()])
                 self.data_packet.loss_stats = None  # reset
 
             if self.data_packet.gpu_mem_usage is not None:
@@ -2759,6 +2898,7 @@ class GuiBase:
         self.window.post_redraw()
 
     def communicate(self):
+        """Background loop: every ~10 ms send a control packet and post `update_wrapper` to the GUI thread."""
         # debug_counter = 0  # Counter to reduce debug output frequency
         while True:
             time.sleep(self.sleep_interval)
@@ -2958,6 +3098,7 @@ class GuiBase:
         tqdm.write("[GUI] Terminated video writer process.")
 
     def cleanup(self):
+        """Tear down worker processes, queues, and the communicate thread; idempotent and lock-guarded."""
         with self._cleanup_lock:
             if self._cleaned:
                 return

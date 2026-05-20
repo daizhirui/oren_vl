@@ -19,6 +19,11 @@ from oren_ros.tqdm_redirect import install_ros_tqdm_redirect
 
 
 def main(args=None):
+    """Initialize rclpy, build a RosTrainer from the ``trainer_config_path`` param, and run training to completion.
+
+    Args:
+        args: Optional CLI argument list forwarded to ``rclpy.init``.
+    """
     # Disable rclpy's own SIGINT handler so KeyboardInterrupt lands in
     # `Trainer.train()`'s try/finally on the main thread (where cleanup runs).
     rclpy.init(args=args, signal_handler_options=SignalHandlerOptions.NO)

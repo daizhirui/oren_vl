@@ -1,5 +1,6 @@
 #pragma once
 
+#include "color_traits.hpp"
 #include "intersection.hpp"
 
 #include <omp.h>
@@ -1406,6 +1407,7 @@ namespace erl::geometry {
         this->m_neighbor_key_[unchanged_dim] = key_unchanged;
         this->m_neighbor_key_[changing_dim1] = key[changing_dim1] - half_offset;
         this->m_neighbor_key_[changing_dim2] = key[changing_dim2] - half_offset;
+        this->m_min_key_changing_dim1_ = this->m_neighbor_key_[changing_dim1];
         this->m_max_key_changing_dim1_ = std::min(
             key[changing_dim1] + (level == 0 ? 1 : half_offset),
             static_cast<OctreeKey::KeyType>(1 << max_depth));
@@ -1443,9 +1445,16 @@ namespace erl::geometry {
 
             // found a neighbor
             s.key = this->m_tree_->AdjustKeyToDepth(m_neighbor_key_, node_depth);
-            // avoid duplicate
-            if (s.key[changing_dim1] != key_changing_dim1) {
-                // the node's center is not on the current row
+            // avoid duplicate: accept only at the cell's first dim1 row within scan range.
+            // The cell's d1 boundary is (center >> level) << level. We accept when the
+            // scan position equals max(cell_d1_lo, scan_start), i.e., the first dim1 row
+            // where this cell appears in our scan.
+            const uint32_t max_depth = this->m_tree_->GetTreeDepth();
+            const uint32_t nl = max_depth - node_depth;
+            const uint32_t cell_d1_lo = (s.key[changing_dim1] >> nl) << nl;
+            const uint32_t accept_d1 = std::max(cell_d1_lo, m_min_key_changing_dim1_);
+            if (key_changing_dim1 != accept_d1) {
+                // not the first row for this cell — skip to avoid duplicate
                 s.node = nullptr;
                 ++key_changing_dim2;
                 if (key_changing_dim2 >= m_max_key_changing_dim2_) {  // go to the next row
@@ -1455,13 +1464,12 @@ namespace erl::geometry {
                 continue;
             }
             // while the loop ends here, update key_changing_dim2 to the next value
-            const uint32_t max_depth = this->m_tree_->GetTreeDepth();
             key_changing_dim2 = s.key[changing_dim2] +
                                 (node_depth == max_depth ? 1 : (1 << (max_depth - node_depth - 1)));
         }
         // check if we have reached the end
-        if (s.node == nullptr && key_changing_dim1 >= m_max_key_changing_dim1_ &&
-            key_changing_dim2 >= m_max_key_changing_dim2_) {
+        if (s.node == nullptr || (key_changing_dim1 >= m_max_key_changing_dim1_ &&
+                                  key_changing_dim2 >= m_max_key_changing_dim2_)) {
             this->Terminate();
         }
     }
@@ -3001,6 +3009,66 @@ namespace erl::geometry {
         }
 
         return node;
+    }
+
+    template<class Node, class Interface, class InterfaceSetting>
+    void
+    OctreeImpl<Node, Interface, InterfaceSetting>::PaintTree(
+        const Eigen::Ref<const Matrix3X> &points,
+        const Eigen::Ref<const ColorMatrix> &colors,
+        const bool set_color,
+        const bool discrete) {
+        if constexpr (!detail::has_set_color_v<Node> || !detail::has_update_color_v<Node>) {
+            ERL_WARN(
+                "PaintTree called on a tree whose node type does not support color. Skipping.");
+        } else {  // constexpr if-else to avoid compile error when Node does not have color methods
+            ERL_DEBUG_ASSERT(
+                colors.cols() == points.cols(),
+                "colors and points must have the same number of columns.");
+
+            if (!discrete) {
+                for (long i = 0; i < points.cols(); ++i) {
+                    auto p = points.col(i);
+                    auto *node = const_cast<Node *>(this->Search(p[0], p[1], p[2]));
+                    if (node == nullptr) { continue; }
+                    const auto color = colors.col(i);
+                    if (set_color) {
+                        node->SetColor(color[0], color[1], color[2], color[3]);
+                    } else {
+                        node->UpdateColor(color[0], color[1], color[2], color[3]);
+                    }
+                }
+                return;
+            }
+
+            // discrete mode: deduplicate by key, last point wins
+            OctreeKeyLongMap key_to_index;
+            key_to_index.reserve(points.cols());
+            for (long i = 0; i < points.cols(); ++i) {
+                OctreeKey key;
+                auto p = points.col(i);
+                if (!this->CoordToKeyChecked(p[0], p[1], p[2], key)) { continue; }
+                key_to_index[key] = i;
+            }
+
+            // collect into a vector for parallel iteration
+            std::vector<std::pair<OctreeKey, long>> entries(
+                key_to_index.begin(),
+                key_to_index.end());
+
+#pragma omp parallel for schedule(dynamic) default(none) shared(entries, colors, set_color)
+            for (std::size_t j = 0; j < entries.size(); ++j) {
+                const auto &[key, idx] = entries[j];
+                auto *node = const_cast<Node *>(this->Search(key));
+                if (node == nullptr) { continue; }
+                const auto color = colors.col(idx);
+                if (set_color) {
+                    node->SetColor(color[0], color[1], color[2], color[3]);
+                } else {
+                    node->UpdateColor(color[0], color[1], color[2], color[3]);
+                }
+            }
+        }
     }
 
     template<class Node, class Interface, class InterfaceSetting>

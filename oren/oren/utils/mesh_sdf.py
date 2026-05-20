@@ -4,6 +4,12 @@ import open3d as o3d
 
 class MeshSdf:
     def __init__(self, vertices: np.ndarray, triangles: np.ndarray):
+        """Build an Open3D raycasting scene from a triangle mesh and probe its normal orientation.
+
+        Args:
+            vertices: (V, 3) float array of mesh vertex positions.
+            triangles: (T, 3) int array of triangle vertex indices.
+        """
         self.scene = o3d.t.geometry.RaycastingScene()
 
         mesh = o3d.geometry.TriangleMesh()
@@ -14,9 +20,8 @@ class MeshSdf:
 
         self.scene.add_triangles(o3d.t.geometry.TriangleMesh.from_legacy(mesh))
 
-        # Open3D determines the sign by checking if the point is inside the closed surface.
-        # If inside the closed surface, the returned sign is -1.
-        # However, the mesh may have flipped normals. We need to check this.
+        # Open3D determines the sign by checking if the point is inside the closed surface. If inside the closed
+        # surface, the returned sign is -1. However, the mesh may have flipped normals. We need to check this.
         self.flip_sign = False
         pcd = mesh.sample_points_uniformly(1000, True)
         points = np.asarray(pcd.points) + 0.01 * np.asarray(pcd.normals)
@@ -24,6 +29,16 @@ class MeshSdf:
         self.flip_sign = np.mean(sdf) < 0
 
     def __call__(self, points: np.ndarray, *args, **kwargs):
+        """Compute signed distance from each query point to the mesh surface.
+
+        Args:
+            points: (N, 3) array of query points.
+            *args: Ignored; accepted for interface compatibility.
+            **kwargs: Ignored; accepted for interface compatibility.
+
+        Returns:
+            (N,) signed distances, with sign flipped if the mesh normals point inward.
+        """
         positions = o3d.core.Tensor(points.astype(np.float32), o3d.core.Dtype.Float32)
         sdf = self.scene.compute_signed_distance(positions, nsamples=3)
         sdf = sdf.numpy()
