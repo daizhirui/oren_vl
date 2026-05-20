@@ -1,5 +1,6 @@
 #include "erl_geometry/init.hpp"
 
+#include "erl_common/init.hpp"
 #include "erl_geometry/semi_sparse_octree.hpp"
 #include "erl_geometry/semi_sparse_quadtree.hpp"
 
@@ -14,6 +15,7 @@ namespace erl::geometry {
         static bool initialized_ = false;
 
         if (initialized_) { return true; }
+        if (!erl::common::Init()) { return false; }
 
         REGISTER(NdTreeSetting);
         REGISTER(SemiSparseNdTreeSetting);
