@@ -10,6 +10,8 @@ Versions apply to all four packages in this monorepo (`oren`, `oren_msgs`,
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-05-20
+
 ### Added
 - `oren_vl` package: vision-language extension that fuses CLIP features into the
   octree field via `FieldStorage` (see `DESIGN-VL-Fusion.md`).
@@ -35,11 +37,6 @@ Versions apply to all four packages in this monorepo (`oren`, `oren_msgs`,
 
 ### Removed
 - Legacy `sparse_octree` implementation (superseded by `semi_sparse_octree`).
-
-## [0.2.0] - 2026-05-20
-
-Versions of all four packages bumped from `0.1.0` to `0.2.0`. TODO: set the
-release date and cut a `v0.2.0` tag once the entries above are finalized.
 
 [Unreleased]: https://github.com/daizhirui/oren_vl/compare/v0.2.0...HEAD
 [0.2.0]: https://github.com/daizhirui/oren_vl/releases/tag/v0.2.0
