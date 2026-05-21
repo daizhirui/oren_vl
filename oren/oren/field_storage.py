@@ -64,20 +64,14 @@ class FieldStorage(nn.Module):
         # Allocated for mode in {"explicit", "hybrid"}. Init values come from `cfg.explicit_prior_init`.
         if cfg.mode in ("explicit", "hybrid"):
             self.values = nn.Parameter(
-                torch.full(
-                    (init_capacity, cfg.output_dim),
-                    cfg.explicit_prior_init,
-                    dtype=torch.float32,
-                ),
+                torch.full((init_capacity, cfg.output_dim), cfg.explicit_prior_init, dtype=torch.float32)
             )
             if cfg.gradient_augmentation:
                 assert cfg.output_dim == 1, (
                     f"gradient_augmentation is only valid for scalar fields (output_dim=1); "
                     f"got output_dim={cfg.output_dim}"
                 )
-                self.grads = nn.Parameter(
-                    torch.zeros((init_capacity, 3), dtype=torch.float32),
-                )
+                self.grads = nn.Parameter(torch.zeros((init_capacity, 3), dtype=torch.float32))
             else:
                 self.grads = None
         else:
@@ -100,10 +94,14 @@ class FieldStorage(nn.Module):
                 # Private banks never carry a trunk — the field's own `implicit_net` is the only head. The bank's name
                 # reuses the field's name so any state_dict prefix collision is impossible (private banks live under
                 # the field's submodule scope, not under FieldBank.banks).
+                # Propagate the field's tracking flag onto the private bank's config so the bank allocates its own
+                # `features_used` mask in lockstep. Shared banks (the `else` branch) own their tracking flag in
+                # their own FeatureBankConfig, declared on the parent FieldBank.
                 private_bank_cfg = FeatureBankConfig(
                     name=cfg.name,
                     feature_dim=cfg.implicit_feature_dim,
                     shared_net_cfg=None,
+                    track_used_vertices=cfg.track_used_vertices,
                 )
                 private_bank = FeatureBank(private_bank_cfg, init_capacity=init_capacity)
                 # Register the private bank under `self.bank` so its parameters appear once in state_dict at
@@ -131,10 +129,20 @@ class FieldStorage(nn.Module):
             head_in_dim = base_dim + aux_extra_dim + (cfg.output_dim if cfg.mode == "hybrid" else 0)
 
             cfg.implicit_net_cfg.input_dim = head_in_dim
+            cfg.implicit_net_cfg.output_dim = cfg.output_dim
             self.implicit_net = ImplicitNet(cfg.implicit_net_cfg)
         else:
             self._own_bank = False
             self.implicit_net = None
+
+        # ---- Touched-vertex tracking buffer ----
+        # Allocated BEFORE the resize observer is registered, because `register_resize_observer` immediately fires
+        # a catch-up call to `_on_octree_resize` (which inspects `self.values_used`). Non-persistent: the mask is
+        # reconstructed at load time from the sparse `values_used_indices` saved in state_dict.
+        if cfg.track_used_vertices and self.values is not None:
+            self.register_buffer("values_used", torch.zeros((init_capacity,), dtype=torch.bool), persistent=False)
+        else:
+            self.values_used: Optional[torch.Tensor] = None
 
         # ---- Resize observer for explicit branch parameters ----
         # Grow per-vertex tensors in lockstep with octree.sso.num_vertices. The lambda captures `self` weakly via the
@@ -191,6 +199,8 @@ class FieldStorage(nn.Module):
             )
         if self.grads is not None:
             grow_param_first_dim(self.grads, new_capacity, fill_value=0.0)
+        if self.values_used is not None:
+            grow_param_first_dim(self.values_used, new_capacity, fill_value=False)
 
     # ------------------------------------------------------------------
     # Branch implementations
@@ -218,10 +228,16 @@ class FieldStorage(nn.Module):
         L = self.cfg.implicit_feature_level
         agg = self.cfg.implicit_feature_aggregation
 
+        # Touched-vertex tracking for the implicit branch lives on the bank itself. Forward the mask whenever
+        # the bank has one allocated, regardless of ownership -- shared banks accumulate touches from every
+        # field that gathers from them (OR-of-accesses), which is what the FeatureBankConfig.track_used_vertices
+        # flag is for. Private banks get the same treatment because their flag was copied from this field's
+        # `cfg.track_used_vertices` at construction time.
+        bank_touched_mask = bank.features_used
         per_level: list[torch.Tensor] = []
         for level in range(1, L + 1):
             level_geom = geom.at_level(level)
-            per_level.append(self.implicit_fuser.gather(level_geom, bank.features))
+            per_level.append(self.implicit_fuser.gather(level_geom, bank.features, touched_mask=bank_touched_mask))
 
         if L == 1:
             feats = per_level[0]
@@ -254,9 +270,10 @@ class FieldStorage(nn.Module):
             return self.prior_fuser.gather(
                 level_geom,
                 self.values,
+                touched_mask=self.values_used,
                 grads=self.grads if self.cfg.gradient_augmentation else None,
             )
-        return self.prior_fuser.gather(level_geom, self.values)
+        return self.prior_fuser.gather(level_geom, self.values, touched_mask=self.values_used)
 
     # ------------------------------------------------------------------
     # Public forward
@@ -324,4 +341,96 @@ class FieldStorage(nn.Module):
             implicit=implicit,
             pred=pred,
             batch_shape=geom.batch_shape,
+        )
+
+    # -----------------------------------------------------------------------
+    # Sparse-encoded state_dict for the explicit `values` and `grads` buffers
+    # -----------------------------------------------------------------------
+    # The FeatureBank handles the analogous compression on `bank.features`. We intercept `values` and `grads` here;
+    # the fuser-owned counts / weight_sum buffers stay dense (they are O(V), not O(V*D)).
+    # `values` and `grads` share the same touched-vertex set because GA only works with TrilinearFuser, whose gather
+    # touches the same 8 corners for both buffers, so we save one index array and two row tensors.
+
+    def _save_to_state_dict(self, destination, prefix, keep_vars) -> None:
+        super()._save_to_state_dict(destination, prefix, keep_vars)
+        if self.values_used is None:
+            return
+        values_key = prefix + "values"
+        grads_key = prefix + "grads"
+        if values_key not in destination and grads_key not in destination:
+            return
+        indices = self.values_used.nonzero(as_tuple=False).squeeze(-1).to(torch.long)
+        destination[prefix + "values_used_indices"] = indices.detach().cpu()
+        # Original capacity so the load path can rebuild the dense buffer at exactly the saved size without
+        # depending on the octree's resize observers having fired first. Reused for both `values` and `grads`
+        # since they share the same leading dim. `values_used` is only allocated when `values` exists (see
+        # __init__), so `self.values` is guaranteed non-None at this point.
+        assert self.values is not None
+        destination[prefix + "values_used_capacity"] = torch.tensor(self.values.shape[0], dtype=torch.int64)
+        if values_key in destination:
+            dense = destination.pop(values_key)
+            destination[prefix + "values_used_rows"] = dense.detach()[indices].cpu()
+        if grads_key in destination:
+            dense_grads = destination.pop(grads_key)
+            destination[prefix + "grads_used_rows"] = dense_grads.detach()[indices].cpu()
+
+    def _load_from_state_dict(
+        self,
+        state_dict,
+        prefix,
+        local_metadata,
+        strict,
+        missing_keys,
+        unexpected_keys,
+        error_msgs,
+    ) -> None:
+        idx_key = prefix + "values_used_indices"
+        rows_key = prefix + "values_used_rows"
+        grads_rows_key = prefix + "grads_used_rows"
+        cap_key = prefix + "values_used_capacity"
+        if idx_key in state_dict and (rows_key in state_dict or grads_rows_key in state_dict):
+            assert self.values is not None, (
+                "Sparse vertex-tracking checkpoint found, but the current model has no `values` buffer "
+                "(implicit-only mode). The saved checkpoint and the loaded config disagree on `field.mode`."
+            )
+
+            indices = state_dict.pop(idx_key).to(torch.long)
+            if cap_key in state_dict:
+                capacity = int(state_dict.pop(cap_key).item())
+            else:
+                # Pre-capacity sparse checkpoints fall back to the local shape; safe because the top-level
+                # assertion already guarantees `self.values is not None`.
+                capacity = self.values.shape[0]
+            if rows_key in state_dict:
+                if capacity > self.values.shape[0]:
+                    grow_param_first_dim(self.values, capacity, fill_value=self.cfg.explicit_prior_init)
+                rows = state_dict.pop(rows_key)
+                dense = torch.full(
+                    (capacity, self.cfg.output_dim),
+                    self.cfg.explicit_prior_init,
+                    dtype=self.values.dtype,
+                    device=self.values.device,
+                )
+                idx_on_dev = indices.to(dense.device)
+                dense.index_copy_(0, idx_on_dev, rows.to(dense.device, dtype=dense.dtype))
+                state_dict[prefix + "values"] = dense
+            if grads_rows_key in state_dict:
+                assert self.grads is not None, (
+                    "Sparse `grads` state_dict entry found for a field without gradient_augmentation; the "
+                    "saved checkpoint and the loaded config disagree on `field.gradient_augmentation`."
+                )
+                if capacity > self.grads.shape[0]:
+                    grow_param_first_dim(self.grads, capacity, fill_value=0.0)
+                grad_rows = state_dict.pop(grads_rows_key)
+                grad_dense = torch.zeros((capacity, 3), dtype=self.grads.dtype, device=self.grads.device)
+                idx_on_dev = indices.to(grad_dense.device)
+                grad_dense.index_copy_(0, idx_on_dev, grad_rows.to(grad_dense.device, dtype=grad_dense.dtype))
+                state_dict[prefix + "grads"] = grad_dense
+            if self.values_used is not None:
+                if capacity > self.values_used.shape[0]:
+                    grow_param_first_dim(self.values_used, capacity, fill_value=False)
+                self.values_used.zero_()
+                self.values_used[indices.to(self.values_used.device)] = True
+        super()._load_from_state_dict(
+            state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs
         )

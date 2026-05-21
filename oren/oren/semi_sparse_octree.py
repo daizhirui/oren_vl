@@ -170,6 +170,14 @@ class SemiSparseOctree(torch.nn.Module):
             if tuple(saved.shape) != tuple(local.shape):
                 setattr(self, name, torch.empty(saved.shape, dtype=local.dtype, device=local.device))
 
+        # 4. Fire registered resize observers so per-vertex tensors owned by sibling modules (FieldStorage.values,
+        # FeatureBank.features, fuser counts / weight_sum, etc.) grow to the loaded capacity *before* their own
+        # `_load_from_state_dict` runs the in-place `copy_`. Without this, freshly-constructed buffers stay at
+        # `init_vertex_num` and the subsequent load throws a shape-mismatch error. Each observer's grow path is a
+        # no-op when the buffer is already large enough, so re-firing here is safe.
+        for fn in self._resize_observers:
+            fn(self._last_known_capacity)
+
         super()._load_from_state_dict(
             state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs
         )

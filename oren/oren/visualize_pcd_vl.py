@@ -28,11 +28,44 @@ class VisualizePcdConfig(ConfigABC):
     vl_features_dir: str = None  # required
     frame_stride: int = 1
     pca_fit_samples: int = 30000
+    pca_path: Optional[str] = None  # pca.npz from generate_vl_features; "" forces a fresh fit
     voxel_downsample: float = -1.0  # >0 enables o3d voxel_down_sample at this size (m)
     save_screenshot: Optional[str] = None  # PNG path for headless render
     save_pcd: Optional[str] = None  # write the PCA-colored cloud (.ply / .pcd / ...)
     interactive: bool = False  # open an Open3D window (default if no screenshot)
     seed: int = 0
+
+
+class _SavedPCA:
+    """Minimal duck-typed PCA replacement: ``transform`` matches sklearn's ``(X - mean_) @ components_.T``."""
+
+    def __init__(self, components: np.ndarray, mean: np.ndarray, explained_variance_ratio: np.ndarray):
+        self.components_ = components.astype(np.float32)
+        self.mean_ = mean.astype(np.float32)
+        self.explained_variance_ratio_ = explained_variance_ratio
+
+    def transform(self, X: np.ndarray) -> np.ndarray:
+        return (X.astype(self.components_.dtype) - self.mean_) @ self.components_.T
+
+
+def _load_pca(path: pathlib.Path) -> _SavedPCA:
+    """Load a PCA saved by ``generate_vl_features`` into a sklearn-compatible projector."""
+    data = np.load(path)
+    print(f"Loaded PCA from {path}; explained variance ratio: {data['explained_variance_ratio']}")
+    return _SavedPCA(data["components"], data["mean"], data["explained_variance_ratio"])
+
+
+def _resolve_pca_path(vl_features_dir: str, override: Optional[str]) -> Optional[pathlib.Path]:
+    """Pick the PCA file to load. Explicit override wins; empty string disables. Otherwise auto-locate."""
+    if override == "":
+        return None
+    if override is not None:
+        path = pathlib.Path(override)
+        if not path.is_file():
+            raise FileNotFoundError(f"pca_path override does not exist: {path}")
+        return path
+    candidate = pathlib.Path(vl_features_dir) / "pca.npz"
+    return candidate if candidate.is_file() else None
 
 
 def fit_pca(dataset: VlFeatureDataset, stride: int, n_samples: int, seed: int) -> PCA:
@@ -116,7 +149,10 @@ def main(cfg: VisualizePcdConfig) -> None:
     dataset = VlFeatureDataset(cfg.vl_features_dir)
     print(f"Loaded {len(dataset)} frames; feature {dataset.channels}-d at " f"{dataset.h_feat}x{dataset.w_feat}.")
 
-    pca = fit_pca(dataset, cfg.frame_stride, cfg.pca_fit_samples, cfg.seed)
+    pca_file = _resolve_pca_path(cfg.vl_features_dir, cfg.pca_path)
+    pca = _load_pca(pca_file) if pca_file is not None else fit_pca(
+        dataset, cfg.frame_stride, cfg.pca_fit_samples, cfg.seed
+    )
     pts, rgb_pca = stream_points_and_rgb(dataset, cfg.frame_stride, pca)
     print(f"Collected {pts.shape[0]} points.")
 

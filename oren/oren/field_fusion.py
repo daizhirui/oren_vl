@@ -207,12 +207,25 @@ class Fuser(nn.Module):
         self._little_endian = octree.little_endian_vertex_order
         self._resolution = float(octree.cfg.resolution)
 
-    # Subclasses override.
-    def scatter(self, level_geom: LevelGeometry, values: nn.Parameter, feats: torch.Tensor) -> None:
+    # Subclasses override. `touched_mask`, when provided, is a `(values.shape[0],)` bool buffer the subclass
+    # OR-marks at the global vertex indices it accessed. Callers (FieldStorage / VlNetwork.scatter_update) use
+    # this to drive sparse checkpoint storage; subclasses that ignore it produce dense state_dicts as before.
+    def scatter(
+        self,
+        level_geom: LevelGeometry,
+        values: nn.Parameter,
+        feats: torch.Tensor,
+        touched_mask: Optional[torch.Tensor] = None,
+    ) -> None:
         """Update `values` in place from the (per-level geometry, feats) pair at `level_geom.level`."""
         raise NotImplementedError
 
-    def gather(self, level_geom: LevelGeometry, values: nn.Parameter) -> torch.Tensor:
+    def gather(
+        self,
+        level_geom: LevelGeometry,
+        values: nn.Parameter,
+        touched_mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         """Read features at the query points cached in `level_geom` using the same mechanism as :meth:`scatter`."""
         raise NotImplementedError
 
@@ -277,13 +290,21 @@ class NearestVertexFuser(Fuser):
         return level_geom.vertex_indices.long().gather(1, vlocal.unsqueeze(1)).squeeze(1)  # (N,)
 
     @torch.no_grad()
-    def scatter(self, level_geom: LevelGeometry, values: nn.Parameter, feats: torch.Tensor) -> None:
+    def scatter(
+        self,
+        level_geom: LevelGeometry,
+        values: nn.Parameter,
+        feats: torch.Tensor,
+        touched_mask: Optional[torch.Tensor] = None,
+    ) -> None:
         vidx = self._nearest_vertex_indices(level_geom)  # (N,)
         valid = (vidx >= 0) & (vidx < values.shape[0])
         if not valid.any():
             return
         vidx = vidx[valid]
         f = feats[valid].to(dtype=values.dtype)
+        if touched_mask is not None:
+            touched_mask[vidx] = True
 
         if self.mode == "overwrite":
             values.data[vidx] = f
@@ -294,33 +315,38 @@ class NearestVertexFuser(Fuser):
             values.data[vidx] = (1.0 - self.ema_alpha) * current + self.ema_alpha * f
             return
 
-        # running_average: streaming mean update. We accumulate the batch's per-vertex sums + counts, then fold them
-        # into the existing per-vertex mean so multiple scatter calls compose to the cumulative mean.
+        # running_average: streaming mean update, restricted to the touched vertices. The dense form
+        # (full-capacity scratch + masked write-back) wastes allocator + memcpy time proportional to
+        # `values.shape[0]` even when only a handful of vertices were touched, which makes scatter dominate
+        # wall time on tall-and-narrow octrees. Reducing per-unique-vidx first keeps the work O(U*D) with
+        # U = number of unique touched vertices.
         assert self.counts is not None
-        batch_sums = torch.zeros_like(values.data)
-        batch_sums.index_add_(0, vidx, f)
-        batch_counts = torch.zeros_like(self.counts)
-        batch_counts.index_add_(0, vidx, torch.ones_like(vidx))
+        unique_vidx, inverse, batch_counts = torch.unique(vidx, return_inverse=True, return_counts=True)
+        batch_sums = torch.zeros((unique_vidx.shape[0], values.shape[1]), dtype=values.dtype, device=values.device)
+        batch_sums.index_add_(0, inverse, f)
 
-        touched = batch_counts > 0
-        if not touched.any():
-            return
-        new_counts = self.counts + batch_counts
-        # Welford-style streaming update: new_mean = old_mean + (batch_sum - batch_count * old_mean) / new_count.
-        # The numerator stays small (it's the "new deviation from running mean"), so the final `old + delta`
-        # addition keeps full precision even when old_count * old_mean would have swamped batch_sum in the direct
-        # `(old_count * old_mean + batch_sum) / new_count` form. Matters for long-running fusion sessions or
-        # reduced-precision storage on `values`; safe default otherwise.
-        # Untouched rows keep their old mean; clamp(min=1) on the denominator avoids div-by-zero for those rows.
-        denom = new_counts.clamp(min=1).to(values.dtype).unsqueeze(-1)
-        delta = (batch_sums - batch_counts.to(values.dtype).unsqueeze(-1) * values.data) / denom
-        values.data[touched] = values.data[touched] + delta[touched]
-        self.counts.copy_(new_counts)
+        old_mean = values.data[unique_vidx]
+        new_counts = self.counts[unique_vidx] + batch_counts
+        # Welford form: new_mean = old_mean + (batch_sum - batch_count * old_mean) / new_count. The direct
+        # `(old_count * old_mean + batch_sum) / new_count` form loses precision once old_count * old_mean
+        # swamps batch_sum; this form keeps the numerator small so reduced-precision storage on `values`
+        # stays well-behaved over long fusion sessions.
+        denom = new_counts.to(values.dtype).unsqueeze(-1)
+        delta = (batch_sums - batch_counts.to(values.dtype).unsqueeze(-1) * old_mean) / denom
+        values.data[unique_vidx] = old_mean + delta
+        self.counts[unique_vidx] = new_counts
 
-    def gather(self, level_geom: LevelGeometry, values: nn.Parameter) -> torch.Tensor:
+    def gather(
+        self,
+        level_geom: LevelGeometry,
+        values: nn.Parameter,
+        touched_mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         vidx = self._nearest_vertex_indices(level_geom)  # (N,)
         # Indexing with -1 wraps to the last row; the validity mask zeroes that bogus read.
         valid = (vidx >= 0) & (vidx < values.shape[0])
+        if touched_mask is not None:
+            touched_mask[vidx[valid]] = True
         out = values[vidx]  # (N, D)
         return out * valid.to(values.dtype).unsqueeze(-1)
 
@@ -398,40 +424,77 @@ class _CornerWeightFuser(Fuser):
         return (vidx >= 0) & (vidx < values_capacity)
 
     @torch.no_grad()
-    def scatter(self, level_geom: LevelGeometry, values: nn.Parameter, feats: torch.Tensor) -> None:
-        weights = self._compute_weights(level_geom)  # (N, 8)
-        valid = self._corner_valid_mask(level_geom, values.shape[0])  # (N, 8)
-        weights = weights * valid.to(weights.dtype)  # zero contributions from absent corners
+    def scatter(
+        self,
+        level_geom: LevelGeometry,
+        values: nn.Parameter,
+        feats: torch.Tensor,
+        touched_mask: Optional[torch.Tensor] = None,
+    ) -> None:
+        # Streaming weighted-mean update, restricted to the unique touched vertices. Reducing per-unique-vidx first
+        # keeps the work O(U * D) with U = number of unique touched vertices per call (typically a few thousand).
+        # Mirrors the same fix already in NearestVertexFuser.running_average.
+        vidx = level_geom.vertex_indices.long()  # (N, 8), entries possibly -1
+        vidx_flat = vidx.reshape(-1)  # (N * 8,)
+        # Compute the unique-vidx reduction up front so we can bail out before touching any of the per-corner
+        # weight / feature math when the whole batch lands outside the octree. torch.unique returns sorted
+        # ascending, so the largest entry < 0 means every entry is -1.
+        unique_vidx, inverse = torch.unique(vidx_flat, return_inverse=True)  # (U,), (N * 8,)
+        if unique_vidx[-1] < 0:
+            return
 
-        # Flatten the per-point-per-corner contributions into per-vertex index_add accumulations.
-        # vidx_flat: (N * 8,), w_flat: (N * 8,), wf_flat: (N * 8, D).
+        weights = self._compute_weights(level_geom)  # (N, 8)
+        if touched_mask is not None:
+            touched_mask[unique_vidx[unique_vidx >= 0]] = True
+
         N = level_geom.points.shape[0]
         D = values.shape[1]
-        vidx_flat = level_geom.vertex_indices.long().clamp(min=0).reshape(-1)  # clamp -1 to 0; valid mask zeroes weight
         w_typed = weights.to(values.dtype)  # (N, 8)
         w_flat = w_typed.reshape(-1)  # (N * 8,)
         # Broadcast (N, 1, D) * (N, 8, 1) -> (N, 8, D) without materializing an explicit expand of feats.
         wf_flat = (feats.to(values.dtype).unsqueeze(1) * w_typed.unsqueeze(-1)).reshape(N * 8, D)
 
-        batch_weight_sum = torch.zeros_like(self.weight_sum)
-        batch_weight_sum.index_add_(0, vidx_flat, w_flat.to(self.weight_sum.dtype))
-        batch_weighted_features = torch.zeros_like(values.data)
-        batch_weighted_features.index_add_(0, vidx_flat, wf_flat)
+        # Reduce flattened (corner, feature) contributions onto the precomputed unique-vidx layout, then
+        # sparse-scatter back into `weight_sum` / `values.data`.
+        U = unique_vidx.shape[0]
+        batch_weight_sum_u = torch.zeros((U,), dtype=self.weight_sum.dtype, device=self.weight_sum.device)
+        batch_weight_sum_u.index_add_(0, inverse, w_flat.to(self.weight_sum.dtype))
+        batch_weighted_features_u = torch.zeros((U, D), dtype=values.dtype, device=values.device)
+        batch_weighted_features_u.index_add_(0, inverse, wf_flat)
 
-        touched = batch_weight_sum > 0
-        if not touched.any():
+        keep = (unique_vidx >= 0) & (batch_weight_sum_u > 0)
+        if not keep.any():
             return
-        new_weight_sum = self.weight_sum + batch_weight_sum
-        # new_mean = (old_weight_sum * old_mean + batch_weighted_features) / new_weight_sum, touched rows only.
-        denom = new_weight_sum.clamp(min=torch.finfo(values.dtype).tiny).to(values.dtype).unsqueeze(-1)
-        numer = values.data * self.weight_sum.to(values.dtype).unsqueeze(-1) + batch_weighted_features
-        values.data[touched] = (numer / denom)[touched]
-        self.weight_sum.copy_(new_weight_sum)
+        unique_vidx = unique_vidx[keep]
+        batch_weight_sum_u = batch_weight_sum_u[keep]
+        batch_weighted_features_u = batch_weighted_features_u[keep]
 
-    def gather(self, level_geom: LevelGeometry, values: nn.Parameter) -> torch.Tensor:
+        old_weight_sum_u = self.weight_sum[unique_vidx]
+        new_weight_sum_u = old_weight_sum_u + batch_weight_sum_u
+        old_mean_u = values.data[unique_vidx]
+        # Welford form: new_mean = old_mean + (batch_weighted_features - batch_weight_sum * old_mean) /
+        # new_weight_sum. The direct `(old_weight_sum * old_mean + batch_weighted_features) / new_weight_sum`
+        # form loses precision once `old_weight_sum * old_mean` swamps `batch_weighted_features`; the Welford
+        # form keeps the numerator small so reduced-precision storage on `values` stays well-behaved over
+        # long fusion sessions. Matches the rewrite used in NearestVertexFuser.running_average.
+        # `new_weight_sum_u` is strictly positive here: `keep` required `batch_weight_sum_u > 0` and
+        # `old_weight_sum_u >= 0` (never decremented), so the sum can't underflow to zero.
+        denom_u = new_weight_sum_u.to(values.dtype).unsqueeze(-1)
+        delta_u = (batch_weighted_features_u - batch_weight_sum_u.to(values.dtype).unsqueeze(-1) * old_mean_u) / denom_u
+        values.data[unique_vidx] = old_mean_u + delta_u
+        self.weight_sum[unique_vidx] = new_weight_sum_u
+
+    def gather(
+        self,
+        level_geom: LevelGeometry,
+        values: nn.Parameter,
+        touched_mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         weights = self._compute_weights(level_geom)  # (N, 8)
         valid = self._corner_valid_mask(level_geom, values.shape[0])  # (N, 8)
         weights = weights * valid.to(weights.dtype)
+        if touched_mask is not None:
+            touched_mask[level_geom.vertex_indices.long()[valid]] = True
         norm = weights.sum(dim=-1, keepdim=True).clamp(min=torch.finfo(weights.dtype).tiny)
         weights = weights / norm
         gathered = values[level_geom.vertex_indices.long()]  # (N, 8, D)
@@ -459,11 +522,12 @@ class TrilinearFuser(_CornerWeightFuser):
         self,
         level_geom: LevelGeometry,
         values: nn.Parameter,
+        touched_mask: Optional[torch.Tensor] = None,
         *,
         grads: Optional[nn.Parameter] = None,
     ) -> torch.Tensor:
         if grads is None:
-            return super().gather(level_geom, values)
+            return super().gather(level_geom, values, touched_mask=touched_mask)
 
         # Gradient-augmented (Hermite) trilinear gather. Only valid for scalar fields; we restore the trailing D=1
         # axis at the end so callers see a uniform (N, D) shape.
@@ -474,6 +538,9 @@ class TrilinearFuser(_CornerWeightFuser):
         # No validity mask on the GA path. A -1 in `vertex_indices` wraps to the last row of `values` / `grads`.
         # Callers needing strict boundary handling should mask their loss at the points returned with any missing corner.
         vidx = level_geom.vertex_indices.long()  # (N, 8)
+        if touched_mask is not None:
+            ga_valid = (vidx >= 0) & (vidx < values.shape[0])
+            touched_mask[vidx[ga_valid]] = True
         vertex_values = values[vidx].squeeze(-1)  # (N, 8)
         vertex_grad = grads[vidx]  # (N, 8, 3)
 

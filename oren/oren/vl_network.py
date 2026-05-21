@@ -115,4 +115,9 @@ class VlNetwork(nn.Module):
         )
 
         level_geom = self.octree.query(points.view(-1, 3)).at_level(level)
-        fuser.scatter(level_geom, self.vl_field.values, feats.view(-1, feats.shape[-1]))
+        fuser.scatter(
+            level_geom,
+            self.vl_field.values,
+            feats.view(-1, feats.shape[-1]),
+            touched_mask=self.vl_field.values_used,
+        )

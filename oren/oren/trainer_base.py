@@ -1,4 +1,5 @@
 import random
+import time
 from collections.abc import Callable
 
 import numpy as np
@@ -10,7 +11,7 @@ from oren.key_frame_set import KeyFrameSet
 from oren.loggers import BasicLogger
 from oren.trainer_config import TrainerConfig
 from oren.utils.import_util import get_dataset
-from oren.utils.profiling import GpuTimer
+from oren.utils.profiling import CpuMemoryProfiler, GpuMemoryProfiler, GpuTimer, MemoryRecords, TimerRecords
 from oren.utils.registry import get_criterion, get_model
 from oren.utils.sampling import SampleResults
 
@@ -103,6 +104,12 @@ class TrainerBase:
         )
         self.timer_training_iteration = GpuTimer("training iteration", enable=timer_on, verbose=verbose)
 
+        # Memory profilers parallel to `timer_train_frame`. Only one level is instrumented because the CUDA peak
+        # counter is global per device -- nesting two GpuMemoryProfilers on the same device corrupts the outer
+        # reading. Latest values are pushed to TensorBoard via `_log_memory_to_tb` after each frame / batch.
+        self.mem_train_frame_cpu = CpuMemoryProfiler("train with frame [cpu memory]", enable=timer_on, verbose=verbose)
+        self.mem_train_frame_gpu = GpuMemoryProfiler("train with frame [gpu memory]", enable=timer_on, verbose=verbose)
+
         self.training_iteration_end_callback: Callable[[TrainerBase], None] = None  # type: ignore
         self.training_frame_start_callback: Callable[[TrainerBase, Frame], bool] = None  # type: ignore
         self.training_end_callback: Callable[[TrainerBase], None] = None  # type: ignore
@@ -121,6 +128,8 @@ class TrainerBase:
 
     def train(self):
         """Run the main training loop (streaming or bounded), then evaluate / save in a `finally` block."""
+        train_loop_wall_time_s: float | None = None
+        t0 = time.perf_counter()
         try:
             if self.cfg.online:
                 if self.streaming:
@@ -130,6 +139,10 @@ class TrainerBase:
             else:
                 self._train_bounded_offline()
         finally:
+            # Stop the training-loop clock before final iterations / evaluation / save so the headline number is
+            # the training cost, not the post-hoc bookkeeping.
+            train_loop_wall_time_s = time.perf_counter() - t0
+
             for _ in range(self.cfg.final_iterations):
                 self.train_with_frame(None)
 
@@ -141,6 +154,14 @@ class TrainerBase:
                 self.evaluate()
             if self.cfg.final_save_model:
                 self.save_model("final.pth")
+            if self.cfg.final_save_profiling_stats:
+                total_wall_time_s = time.perf_counter() - t0
+                stats = self._collect_profiling_stats(
+                    train_loop_wall_time_s=train_loop_wall_time_s,
+                    total_wall_time_s=total_wall_time_s,
+                )
+                out_path = self.logger.log_profiling_stats(stats)
+                self.logger.info(f"Time stats saved to {out_path}.")
 
     def _train_streaming(self) -> None:
         pbar = tqdm(desc="Streaming", ncols=120, leave=False)
@@ -206,7 +227,7 @@ class TrainerBase:
             leave=False,
             position=0,
         ):
-            tqdm.write(f"Epoch {self.epoch}/{self.cfg.offline_epochs}")
+            tqdm.write(f"Epoch {self.epoch + 1}/{self.cfg.offline_epochs}")
             indices = list(range(self.cfg.data.start_frame, self.cfg.data.end_frame))
             if self.cfg.offline_shuffle:
                 random.shuffle(indices)
@@ -227,8 +248,10 @@ class TrainerBase:
                 if len(frames) == 0:
                     continue
                 # train with the batch of frames
-                if not self.train_with_frames(frames):
-                    return  # early stop if callback returns False
+                with self.mem_train_frame_cpu, self.mem_train_frame_gpu:
+                    if not self.train_with_frames(frames):
+                        return  # early stop if callback returns False
+                self._log_memory_to_tb()
 
             if self.cfg.ckpt_interval > 0 and (self.epoch + 1) % self.cfg.ckpt_interval == 0:
                 self.save_model(f"epoch_{self.epoch + 1:04d}.pth")
@@ -246,9 +269,10 @@ class TrainerBase:
         if is_key_frame:
             self.logger.info(f"Frame {frame_id} is selected as a key frame.")
 
-        with self.timer_train_frame:
+        with self.mem_train_frame_cpu, self.mem_train_frame_gpu, self.timer_train_frame:
             if not self.train_with_frame(frame=frame):
                 return False
+        self._log_memory_to_tb()
         self.epoch += 1
 
         if self.cfg.ckpt_interval > 0 and self.epoch % self.cfg.ckpt_interval == 0:
@@ -277,9 +301,9 @@ class TrainerBase:
                     return frame
         else:
             if frame_id is not None:
-                assert frame_id < self.cfg.data.end_frame, (
-                    f"Requested frame_id {frame_id} exceeds end_frame {self.cfg.data.end_frame}"
-                )
+                assert (
+                    frame_id < self.cfg.data.end_frame
+                ), f"Requested frame_id {frame_id} exceeds end_frame {self.cfg.data.end_frame}"
                 frame = self.data_stream[frame_id]
                 return frame if torch.all(frame.get_ref_pose().isfinite()) else None
 
@@ -368,6 +392,97 @@ class TrainerBase:
             "training_iteration": self.timer_training_iteration.average_t,
         }
         return time_stats
+
+    def _log_memory_to_tb(self) -> None:
+        """Push the latest CPU/GPU memory profiler readings to TensorBoard.
+
+        No-op when profiling is disabled or the TensorBoard writer is absent (e.g. eval-only loggers). Scalars are
+        written under `memory/<cpu|gpu>_<peak|delta>_mib` against `self.global_step`.
+        """
+        if not self.cfg.profiling:
+            return
+        tb = getattr(self.logger, "tb", None)
+        if tb is None:
+            return
+        mib = 1024.0 * 1024.0
+        step = int(self.global_step)
+        tb.add_scalar("memory/cpu_peak_mib", self.mem_train_frame_cpu.peak_bytes / mib, step)
+        tb.add_scalar("memory/cpu_delta_mib", self.mem_train_frame_cpu.delta_bytes / mib, step)
+        tb.add_scalar("memory/gpu_peak_mib", self.mem_train_frame_gpu.peak_bytes / mib, step)
+        tb.add_scalar("memory/gpu_delta_mib", self.mem_train_frame_gpu.delta_bytes / mib, step)
+
+    def _collect_profiling_stats(self, train_loop_wall_time_s: float, total_wall_time_s: float) -> dict:
+        """Build the full per-timer wall-clock summary written by `train()` at the end of a run.
+
+        Layout:
+            total_wall_time_s      -- wall time from train() entry to end of the finally block
+            train_loop_wall_time_s -- wall time of the training loop only (excludes final_*, evaluate, save)
+            profiling_enabled      -- mirror of cfg.profiling; per-timer entries below are zero when False
+            global_step / epoch    -- loop progress, useful when comparing across variants
+            timers                 -- per-timer dict: {average_s, total_s, count} for the timers TrainerBase owns
+            records                -- snapshot of the global TimerRecords table (broader coverage, e.g. subclass
+                                        and util timers) as {label: {average_s, total_s, count}}
+            memory_profilers       -- per-profiler dict for the `train_with_frame` CPU/GPU memory profilers:
+                                        {peak_bytes, average_peak_bytes, delta_bytes, average_delta_bytes, count}
+            memory_records         -- snapshot of the global MemoryRecords table (per-block memory usage) as
+                                        {label: {peak_bytes, average_peak_bytes, max_peak_bytes, total_delta_bytes,
+                                        average_delta_bytes, count}}
+
+        Args:
+            train_loop_wall_time_s: seconds spent inside the training loop (try block of `train()`).
+            total_wall_time_s: seconds from entry of `train()` through the finally block.
+        """
+        named_timers: dict[str, GpuTimer] = {
+            "train_frame": self.timer_train_frame,
+            "octree_insert": self.timer_octree_insert,
+            "key_frame_set_update": self.timer_key_frame_set_update,
+            "select_key_frames": self.timer_select_key_frames,
+            "sample_rays": self.timer_sample_rays,
+            "generate_sdf_samples": self.timer_generate_sdf_samples,
+            "compute_offset_points": self.timer_compute_offset_points,
+            "find_voxel_indices_offset_points": self.timer_find_voxel_indices_offset_points,
+            "find_voxel_indices_sampled_xyz": self.timer_find_voxel_indices_sampled_xyz,
+            "training_iteration": self.timer_training_iteration,
+        }
+        timers: dict[str, dict[str, float | int]] = {}
+        for name, timer in named_timers.items():
+            count = int(timer.cnt - timer.warmup) if timer.cnt > timer.warmup else 0
+            timers[name] = {
+                "average_s": float(timer.average_t),
+                "total_s": float(timer.total_t),
+                "count": count,
+            }
+
+        # Snapshot the global TimerRecords registry; this also covers timers we don't hold direct references to
+        # (subclass-owned timers, util-level timers, etc.).
+        records = TimerRecords.export_records()
+
+        memory_profilers: dict[str, dict[str, float | int]] = {}
+        for name, prof in {
+            "train_frame_cpu": self.mem_train_frame_cpu,
+            "train_frame_gpu": self.mem_train_frame_gpu,
+        }.items():
+            count = int(prof.cnt - prof.warmup) if prof.cnt > prof.warmup else 0
+            memory_profilers[name] = {
+                "peak_bytes": int(prof.peak_bytes),
+                "average_peak_bytes": float(prof._average_peak),
+                "delta_bytes": int(prof.delta_bytes),
+                "average_delta_bytes": float(prof._average_delta),
+                "count": count,
+            }
+        memory_records = MemoryRecords.export_records()
+
+        return {
+            "total_wall_time_s": float(total_wall_time_s),
+            "train_loop_wall_time_s": float(train_loop_wall_time_s),
+            "profiling_enabled": bool(self.cfg.profiling),
+            "global_step": int(self.global_step),
+            "epoch": int(self.epoch),
+            "timers": timers,
+            "records": records,
+            "memory_profilers": memory_profilers,
+            "memory_records": memory_records,
+        }
 
     def evaluate(self, epoch_dir: str | None = None) -> None:
         raise NotImplementedError("Subclasses must implement evaluate()")

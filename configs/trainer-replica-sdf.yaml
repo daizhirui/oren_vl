@@ -2,7 +2,7 @@ cfg_identifier: oren.trainer_config.TrainerConfig
 trainer_identifier: oren.sdf_trainer.SdfTrainer
 seed: 12345
 log_dir: logs
-exp_name: replica_for_planning
+exp_name: replica_sdf
 device: cuda
 data:
     cfg_identifier: oren.dataset.data_config.DataConfig

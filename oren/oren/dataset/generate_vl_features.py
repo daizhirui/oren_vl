@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import numpy as np
 import torch
 from PIL import Image
+from sklearn.decomposition import PCA
 from torch.utils.data import DataLoader, Dataset
 from torchvision.transforms.functional import pil_to_tensor, to_tensor
 from tqdm import tqdm
@@ -34,6 +35,10 @@ class VLFeatureConfig(ConfigABC):
     batch_size: int = 16
     num_workers: int = 4
     output_dir: str = None
+    # PCA precomputation (fit once on a uniform sample so visualizers can skip the fit pass).
+    pca_components: int = 3
+    pca_fit_samples: int = 50000
+    pca_seed: int = 0
 
 
 def _frame_path(cfg: VLFeatureConfig, kind: str, idx: int) -> str:
@@ -86,6 +91,63 @@ class _FrameDataset(Dataset):
         rgb = to_tensor(Image.open(_frame_path(self.cfg, "rgb", idx)).convert("RGB"))
         depth = pil_to_tensor(Image.open(_frame_path(self.cfg, "depth", idx))).float()
         return idx, self.rgb_transform(rgb), self.depth_transform(depth)
+
+
+def _fit_and_save_pca(
+    feat_mm: np.memmap,
+    depth_mm: np.memmap,
+    output_dir: pathlib.Path,
+    n_components: int,
+    n_samples: int,
+    seed: int,
+) -> dict:
+    """Sample features from valid (depth > 0) pixels, fit a PCA, and dump components + mean to ``pca.npz``.
+
+    Args:
+        feat_mm: (N, H, W, C) memmap of per-pixel features (HWC layout, fp16).
+        depth_mm: (N, H, W) memmap of resampled depth in meters; only pixels with depth > 0 are sampled.
+        output_dir: Bundle directory; ``pca.npz`` is written here.
+        n_components: Number of PCA components to retain.
+        n_samples: Approximate total number of feature vectors to feed into ``PCA.fit``.
+        seed: Seed for per-frame uniform sampling.
+
+    Returns:
+        Manifest snippet describing the saved PCA file.
+    """
+    n_frames = feat_mm.shape[0]
+    per_frame = max(1, n_samples // max(1, n_frames))
+    rng = np.random.default_rng(seed)
+
+    chunks = []
+    for idx in tqdm(range(n_frames), desc="Sampling for PCA", ncols=80):
+        valid = depth_mm[idx] > 0
+        if not valid.any():
+            continue
+        ys, xs = np.nonzero(valid)
+        take = min(per_frame, ys.shape[0])
+        sel = rng.choice(ys.shape[0], take, replace=False)
+        chunks.append(np.asarray(feat_mm[idx, ys[sel], xs[sel]], dtype=np.float32))
+
+    if not chunks:
+        raise RuntimeError("No valid (depth > 0) pixels found; cannot fit PCA.")
+    fit_data = np.concatenate(chunks, axis=0)
+    print(f"Fitting PCA on {fit_data.shape[0]} samples of {fit_data.shape[1]}-d features.")
+    pca = PCA(n_components=n_components)
+    pca.fit(fit_data)
+    print(f"PCA explained variance ratio: {pca.explained_variance_ratio_}")
+
+    np.savez(
+        output_dir / "pca.npz",
+        components=pca.components_.astype(np.float32),
+        mean=pca.mean_.astype(np.float32),
+        explained_variance_ratio=pca.explained_variance_ratio_.astype(np.float32),
+    )
+    return {
+        "file": "pca.npz",
+        "components": int(n_components),
+        "n_samples_fitted": int(fit_data.shape[0]),
+        "explained_variance_ratio": pca.explained_variance_ratio_.tolist(),
+    }
 
 
 def generate_vl_features(cfg: VLFeatureConfig):
@@ -201,6 +263,10 @@ def generate_vl_features(cfg: VLFeatureConfig):
     feat_mm.flush()
     depth_mm.flush()
 
+    pca_info = _fit_and_save_pca(
+        feat_mm, depth_mm, output_dir, cfg.pca_components, cfg.pca_fit_samples, cfg.pca_seed
+    )
+
     # add padding
     bound_min -= 0.5
     bound_max += 0.5
@@ -243,6 +309,7 @@ def generate_vl_features(cfg: VLFeatureConfig):
         },
         "bound_min": bound_min.tolist(),
         "bound_max": bound_max.tolist(),
+        "pca": pca_info,
     }
     with open(output_dir / "vl_features_manifest.json", "w") as f:
         json.dump(manifest, f, indent=2)

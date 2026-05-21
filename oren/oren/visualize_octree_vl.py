@@ -1,10 +1,11 @@
 # pyright: reportPrivateImportUsage=none, reportAttributeAccessIssue=none
 """PCA-visualize an octree with scattered VL features as a colorized voxel grid.
 
-Loads the file produced by `demo_semi_sparse_octree_vl`, computes a per-voxel
-feature (mean over the up to 8 vertex slots), reduces to 3 components via
-PCA, and renders the voxels as a single Open3D triangle mesh with one cube
-per voxel and per-cube color from the PCA projection.
+Loads a VlTrainer checkpoint (`ckpt/final.pth` + sibling `bak/config.yaml`),
+computes a per-voxel feature (mean over the up-to-8 vertex slots) for each
+finest-level leaf, reduces to 3 components via PCA, and renders the voxels
+as a single Open3D triangle mesh with one cube per voxel and per-cube color
+from the PCA projection.
 """
 
 import pathlib
@@ -14,6 +15,7 @@ from typing import Optional
 import numpy as np
 import open3d as o3d
 import torch
+from ruamel import yaml
 from sklearn.decomposition import PCA
 
 from oren.utils.config_abc import ConfigABC
@@ -21,7 +23,10 @@ from oren.utils.config_abc import ConfigABC
 
 @dataclass
 class VisualizeOctreeConfig(ConfigABC):
-    octree_path: str = None  # required: .pt file produced by demo_semi_sparse_octree_vl
+    octree_path: str = None  # required: path to ckpt/final.pth (state_dict) saved by VlTrainer
+    config_path: Optional[str] = None  # optional override; default = <ckpt>/../../bak/config.yaml
+    field_name: str = "vl"  # which field_bank entry to visualize
+    pca_path: Optional[str] = None  # optional pca.npz from generate_vl_features; "" disables auto-detect
     save_screenshot: Optional[str] = None  # PNG path for headless render
     save_mesh: Optional[str] = None        # write the PCA-colored cube mesh (.ply / .obj / ...)
     interactive: bool = False              # open an Open3D window (default if no screenshot)
@@ -95,54 +100,122 @@ def make_voxel_cubes_mesh(centers: np.ndarray, sizes_m: np.ndarray, colors: np.n
     return mesh
 
 
+def _resolve_config_path(ckpt_path: pathlib.Path, override: Optional[str]) -> pathlib.Path:
+    """Locate the trainer config.yaml that pairs with a final.pth checkpoint."""
+    if override is not None:
+        return pathlib.Path(override)
+    # Trainer layout: <run>/ckpt/final.pth and <run>/bak/config.yaml.
+    candidate = ckpt_path.parent.parent / "bak" / "config.yaml"
+    if not candidate.is_file():
+        raise FileNotFoundError(
+            f"Could not auto-locate config.yaml next to {ckpt_path} (looked at {candidate}); "
+            "pass --config-path explicitly."
+        )
+    return candidate
+
+
+def _resolve_pca_path(trainer_cfg: dict, override: Optional[str]) -> Optional[pathlib.Path]:
+    """Pick the PCA file to load. Explicit override wins; empty string disables. Otherwise auto-locate."""
+    if override == "":
+        return None
+    if override is not None:
+        path = pathlib.Path(override)
+        if not path.is_file():
+            raise FileNotFoundError(f"pca_path override does not exist: {path}")
+        return path
+    try:
+        data_path = trainer_cfg["data"]["dataset_args"]["data_path"]
+    except (KeyError, TypeError):
+        return None
+    candidate = pathlib.Path(data_path) / "pca.npz"
+    return candidate if candidate.is_file() else None
+
+
+def _project_feat(feat: np.ndarray, pca_path: Optional[pathlib.Path]) -> np.ndarray:
+    """Project per-voxel features to 3-D either via a saved PCA (mean + components) or a freshly fit one."""
+    if pca_path is not None:
+        data = np.load(pca_path)
+        components = data["components"].astype(np.float64)  # (k, C)
+        mean = data["mean"].astype(np.float64)              # (C,)
+        print(
+            f"Loaded PCA from {pca_path}; "
+            f"explained variance ratio: {data['explained_variance_ratio']}"
+        )
+        return (feat.astype(np.float64) - mean) @ components.T
+    pca = PCA(n_components=3)
+    feat_pca = pca.fit_transform(feat)
+    print(f"PCA explained variance ratio (fit on the fly): {pca.explained_variance_ratio_}")
+    return feat_pca
+
+
 def main(cfg: VisualizeOctreeConfig) -> None:
-    """Load an octree state, PCA-color its VL features per voxel, and render / save the result.
+    """Load a VlTrainer checkpoint, PCA-color its VL features per voxel, and render / save the result.
 
     Args:
-        cfg: Visualization configuration with the input octree path and optional save / interactive flags.
+        cfg: Visualization configuration with the input checkpoint path and optional save / interactive flags.
     """
     assert cfg.octree_path is not None, "VisualizeOctreeConfig.octree_path is required"
 
-    state = torch.load(cfg.octree_path, map_location="cpu", weights_only=False)
+    ckpt_path = pathlib.Path(cfg.octree_path)
+    config_path = _resolve_config_path(ckpt_path, cfg.config_path)
+    with open(config_path) as f:
+        trainer_cfg = yaml.YAML(typ="safe").load(f)
+    resolution = float(trainer_cfg["model"]["octree_cfg"]["resolution"])
 
-    voxels = state["voxels"]                       # (N, 4) [x, y, z, discrete_size]
-    voxel_centers = state["voxel_centers"]         # (N, 3) meters
-    vertex_indices = state["vertex_indices"]       # (N, 8)
-    implicit_features = state["implicit_features"] # (Vmax, C)
-    octree_cfg = state["octree_cfg"]
-    resolution = float(octree_cfg["resolution"])
+    state = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+
+    voxels = state["octree.voxels"]                # (N, 4) [x, y, z, discrete_size]
+    voxel_centers = state["octree.voxel_centers"]  # (N, 3) meters
+    vertex_indices = state["octree.vertex_indices"]  # (N, 8)
+    values_key = f"field_bank.fields.{cfg.field_name}.values"
+    weight_key = f"field_bank.fields.{cfg.field_name}.prior_fuser.weight_sum"
+    if values_key not in state:
+        raise KeyError(
+            f"Field '{cfg.field_name}' not found in checkpoint. Available field keys: "
+            f"{sorted(k for k in state if k.startswith('field_bank.fields.'))}"
+        )
+    vertex_values = state[values_key]              # (Vmax, C) per-vertex explicit features
+    vertex_weights = state.get(weight_key)         # (Vmax,) or None
 
     N = int(voxels.shape[0])
     # Leaves at the finest level have discrete voxel_size == 1.
     leaf_mask = (voxels[:, -1] == 1).numpy()
     print(
-        f"Loaded octree: {N} buffer rows, {int(leaf_mask.sum())} finest leaves; "
-        f"implicit features {tuple(implicit_features.shape)}."
+        f"Loaded checkpoint: {N} buffer rows, {int(leaf_mask.sum())} finest leaves; "
+        f"field '{cfg.field_name}' values {tuple(vertex_values.shape)}; resolution={resolution} m."
     )
 
-    # Per-node feature (averaged over the up-to-8 valid vertex slots).
-    feat = per_voxel_features(vertex_indices, implicit_features).numpy()  # (N, C)
+    # Restrict to leaves up front so we don't materialize the (N, 8, C) gather for internal nodes.
+    leaf_idx = np.nonzero(leaf_mask)[0]
+    leaf_vertex_indices = vertex_indices[leaf_idx]                              # (L, 8)
+    feat = per_voxel_features(leaf_vertex_indices, vertex_values).numpy()       # (L, C)
 
-    # Render only leaves with non-zero features. Internal nodes overlap their
-    # children, so we drop them; nodes that never got a feature scatter are
-    # also skipped (zero-norm rows).
-    norms = np.linalg.norm(feat, axis=1)
-    keep = leaf_mask & (norms > 1e-8)
-    print(f"Finest leaves with non-zero VL features: {int(keep.sum())} / {int(leaf_mask.sum())}.")
-    if not keep.any():
+    # Drop leaves that never received a scatter. Prefer the explicit weight_sum
+    # when available (zero-norm features and "never updated" are different in
+    # principle); fall back to feature norm otherwise.
+    if vertex_weights is not None:
+        safe = leaf_vertex_indices.clamp(min=0).long()
+        valid = (leaf_vertex_indices >= 0).float()
+        per_voxel_w = (vertex_weights[safe] * valid).sum(dim=1).numpy()
+        keep_leaf = per_voxel_w > 0.0
+    else:
+        keep_leaf = np.linalg.norm(feat, axis=1) > 1e-8
+    print(f"Finest leaves with non-zero VL features: {int(keep_leaf.sum())} / {int(leaf_mask.sum())}.")
+    if not keep_leaf.any():
         raise RuntimeError("No finest-level leaf received any VL feature; nothing to visualize.")
 
-    feat = feat[keep]
-    centers = voxel_centers.numpy()[keep].astype(np.float64)
-    sizes_m = voxels[:, -1].numpy()[keep].astype(np.float64) * resolution
+    feat = feat[keep_leaf]
+    kept_idx = leaf_idx[keep_leaf]
+    centers = voxel_centers.numpy()[kept_idx].astype(np.float64)
+    sizes_m = voxels[:, -1].numpy()[kept_idx].astype(np.float64) * resolution
 
-    # PCA -> 3 components. Use rank-based (quantile) normalization per channel
-    # so each color axis spans [0, 1] regardless of the variance ratios.
-    # Min-max would collapse low-variance channels to a thin band when one
-    # principal direction dominates (typical for semantically uniform scenes).
-    pca = PCA(n_components=3)
-    feat_pca = pca.fit_transform(feat)
-    print(f"PCA explained variance ratio: {pca.explained_variance_ratio_}")
+    # PCA -> 3 components. Prefer the PCA saved at feature-extraction time so
+    # colors are consistent across visualizations of the same scene; fall back
+    # to fitting on the leaf features when no saved PCA is available.
+    # Rank-normalize per channel so each color axis spans [0, 1] regardless of
+    # variance ratios (min-max would collapse low-variance channels).
+    pca_file = _resolve_pca_path(trainer_cfg, cfg.pca_path)
+    feat_pca = _project_feat(feat, pca_file)
     ranks = feat_pca.argsort(axis=0).argsort(axis=0)
     rgb = ranks.astype(np.float64) / max(1, feat_pca.shape[0] - 1)
 

@@ -52,6 +52,11 @@ class FeatureBankConfig(ConfigABC):
     shared_net_cfg: Optional[ImplicitNetConfig] = None
     init: Literal["zero", "normal", "uniform", "xavier_normal"] = "zero"
     init_scale: float = 1e-2
+    # Allocate a `features_used` bool buffer and sparse-encode `features` in state_dict (drop untouched rows).
+    # Mirrors `FieldStorageConfig.track_used_vertices` and applies independently. For private banks owned by a
+    # FieldStorage, the field's `track_used_vertices` flag is copied here at private-bank construction time;
+    # for *shared* banks declared on a FieldBank, set this in YAML directly.
+    track_used_vertices: bool = False
 
 
 class FeatureBank(nn.Module):
@@ -77,6 +82,14 @@ class FeatureBank(nn.Module):
         self.shared_net: Optional[ImplicitNet] = (
             ImplicitNet(cfg.shared_net_cfg) if cfg.shared_net_cfg is not None else None
         )
+
+        # Touched-vertex tracking for sparse checkpoint storage. The mask itself is non-persistent (it is implied by
+        # the indices saved in `features_used_indices`); _save_to_state_dict / _load_from_state_dict below take care
+        # of the encoding. Multiple FieldStorage gathers on the same bank OR-mark it.
+        if cfg.track_used_vertices:
+            self.register_buffer("features_used", torch.zeros((init_capacity,), dtype=torch.bool), persistent=False)
+        else:
+            self.features_used: Optional[torch.Tensor] = None
 
     @torch.no_grad()
     def _init_rows_inplace(self, rows: torch.Tensor) -> None:
@@ -116,3 +129,70 @@ class FeatureBank(nn.Module):
         grew = grow_param_first_dim(self.features, new_capacity, fill_value=0.0)
         if grew and self.cfg.init != "zero":
             self._init_rows_inplace(self.features.data[old_size:])
+        if self.features_used is not None:
+            grow_param_first_dim(self.features_used, new_capacity, fill_value=False)
+
+    def _save_to_state_dict(self, destination, prefix, keep_vars) -> None:
+        """Dense save by default. With tracking on, replace the `features` tensor with a sparse
+        `(indices, rows_at_indices)` pair plus the original capacity, so untouched rows are not serialized
+        and the load path can rebuild the dense buffer without depending on external resize-observer fires."""
+        super()._save_to_state_dict(destination, prefix, keep_vars)
+        if self.features_used is None:
+            return
+        dense_key = prefix + "features"
+        if dense_key not in destination:
+            return
+        dense = destination.pop(dense_key)
+        indices = self.features_used.nonzero(as_tuple=False).squeeze(-1).to(torch.long)
+        destination[prefix + "features_used_indices"] = indices.detach().cpu()
+        # `dense` here is a `nn.Parameter` when keep_vars=True; `.detach()` returns a Tensor regardless.
+        destination[prefix + "features_used_rows"] = dense.detach()[indices].cpu()
+        # Save the original `features.shape[0]` so the load path can grow the local buffer to that capacity before
+        # the in-place `copy_` runs. Without this we would rely on the octree's _load_from_state_dict firing resize
+        # observers first; storing it here makes the FeatureBank load self-contained.
+        destination[prefix + "features_used_capacity"] = torch.tensor(dense.shape[0], dtype=torch.int64)
+
+    def _load_from_state_dict(
+        self,
+        state_dict,
+        prefix,
+        local_metadata,
+        strict,
+        missing_keys,
+        unexpected_keys,
+        error_msgs,
+    ) -> None:
+        """Detect a sparse `(indices, rows_at_indices, capacity)` checkpoint and reconstruct the dense
+        `features` tensor at the saved capacity before delegating to the standard load. The local buffer is
+        grown in place if needed."""
+        idx_key = prefix + "features_used_indices"
+        row_key = prefix + "features_used_rows"
+        cap_key = prefix + "features_used_capacity"
+        if idx_key in state_dict and row_key in state_dict:
+            indices = state_dict.pop(idx_key).to(torch.long)
+            rows = state_dict.pop(row_key)
+            if cap_key in state_dict:
+                capacity = int(state_dict.pop(cap_key).item())
+            else:
+                # Older sparse checkpoints (pre-capacity) fall back to the local buffer's current size, which only
+                # works when the octree resize observer already grew it. Keep the fallback so existing checkpoints
+                # still load.
+                capacity = self.features.shape[0]
+            if capacity > self.features.shape[0]:
+                grow_param_first_dim(self.features, capacity, fill_value=0.0)
+            dense = torch.zeros((capacity, self.feature_dim), dtype=self.features.dtype, device=self.features.device)
+            if self.cfg.init != "zero":
+                # Untouched rows re-drawn from the init distribution. Specific values may diverge from save-time noise
+                # but the distribution matches and these rows received no gradient.
+                self._init_rows_inplace(dense)
+            indices = indices.to(dense.device)
+            dense.index_copy_(0, indices, rows.to(dense.device, dtype=dense.dtype))
+            state_dict[prefix + "features"] = dense
+            if self.features_used is not None:
+                if capacity > self.features_used.shape[0]:
+                    grow_param_first_dim(self.features_used, capacity, fill_value=False)
+                self.features_used.zero_()
+                self.features_used[indices.to(self.features_used.device)] = True
+        super()._load_from_state_dict(
+            state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs
+        )

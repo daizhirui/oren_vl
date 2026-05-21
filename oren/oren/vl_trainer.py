@@ -10,8 +10,12 @@ Frame storage, key-frame management, optimizer wiring, octree insertion, and the
 outer loops all live in `TrainerBase` -- this trainer adds only the per-frame work that's VL-specific.
 """
 
-import torch
+import os
 
+import torch
+import yaml
+
+from oren.evaluator_vl import VlEvaluator
 from oren.frame import Frame, VlFrame
 from oren.trainer_base import TrainerBase
 from oren.trainer_config import TrainerConfig
@@ -44,13 +48,62 @@ class VlTrainer(TrainerBase):
     # TrainerBase abstract hooks
     # ------------------------------------------------------------------
 
-    def _create_evaluator(self):
-        """VL has no mesh / slice extraction; the evaluator slot is unused."""
-        return None
+    def _create_evaluator(self) -> VlEvaluator:
+        """Wrap the live model in a :class:`VlEvaluator` so :meth:`evaluate` can score VL-feature quality.
+
+        Re-uses the trainer's batch size for model-forward chunking. The evaluator holds a reference to the same
+        `self.model` rather than reloading from disk, so it always reflects the latest weights.
+        """
+        return VlEvaluator(
+            batch_size=self.cfg.batch_size,
+            model=self.model,
+            device=self.cfg.device,
+        )
 
     def evaluate(self, epoch_dir: str | None = None) -> None:
-        """No-op. VL features don't have a mesh or slice to extract."""
-        return None
+        """Score the model on every frame in `self.data_stream` and report L1 / L2 / cosine metrics.
+
+        The metrics are computed by :meth:`VlEvaluator.evaluate_dataset` over the full data stream
+        (point-weighted aggregation across all valid points). Results are written to three places:
+
+            - text logger (`self.logger.info`) as a human-readable summary;
+            - tensorboard (`self.logger.tb`) as one scalar per `(field, metric)` pair, tagged at
+                `self.global_step`;
+            - `<misc_dir>/[<epoch_dir>/]vl_metrics.yaml` as a persistent YAML snapshot.
+
+        Args:
+            epoch_dir: optional subdirectory under the logger's `misc_dir` to write the YAML into; the same
+                string is appended to the tensorboard tag prefix so per-epoch evaluations don't overwrite each
+                other on the loss plot. `None` writes at top level.
+        """
+        if self.data_stream is None or len(self.data_stream) == 0:
+            self.logger.info("VlTrainer.evaluate: no data stream available, skipping evaluation.")
+            return
+
+        was_training = self.model.training
+        self.model.eval()
+        try:
+            metrics = self.evaluator.evaluate_dataset(self.data_stream)
+        finally:
+            if was_training:
+                self.model.train()
+
+        self.logger.info(f"VL evaluation metrics: {metrics}")
+
+        if self.logger.tb is not None:
+            tb_prefix = "eval" if epoch_dir is None else f"eval/{epoch_dir}"
+            for field_name, field_metrics in metrics.items():
+                for metric_name, value in field_metrics.items():
+                    if metric_name == "n":
+                        continue
+                    self.logger.tb.add_scalar(f"{tb_prefix}/{field_name}/{metric_name}", value, self.global_step)
+
+        out_dir = self.logger.misc_dir if epoch_dir is None else os.path.join(self.logger.misc_dir, epoch_dir)
+        os.makedirs(out_dir, exist_ok=True)
+        out_path = os.path.join(out_dir, "vl_metrics.yaml")
+        with open(out_path, "w") as f:
+            yaml.safe_dump(metrics, f, sort_keys=False)
+        self.logger.info(f"VL metrics written to {out_path}.")
 
     def save_mesh(self, path: str, prior: bool = False, **kwargs) -> None:
         """No-op. VL features don't have a mesh."""

@@ -66,16 +66,27 @@ class TrainerConfig(ConfigABC):
     finite_difference_eps: float = 0.03
 
     # ---- Final evaluation and saving ----
-    final_iterations: int = 0  # number of iterations after all frames are processed, 0 means no extra iterations
-    final_evaluate: bool = True  # whether to call evaluate() in the cleanup finally
-    final_save_model: bool = True  # whether to write final.pth in the cleanup finally
-    final_save_mesh: bool = True  # whether to save the final mesh
+    # number of iterations after all frames are processed, 0 means no extra iterations
+    final_iterations: int = 0
+    # whether to call evaluate() in the cleanup finally
+    final_evaluate: bool = True
+    # whether to write final.pth in the cleanup finally
+    final_save_model: bool = True
+    # whether to save the final mesh
+    final_save_mesh: bool = True
     mesh_resolution: float = 0.0125
     mesh_iso_value: float = 0.0
     clean_mesh: bool = True
+    # whether to save the final slice
     final_save_slice: bool = True
-    slice_center: Optional[list] = None  # if None, use the center of the scene bounding box
-    ckpt_interval: int = -1  # interval to save checkpoints, -1 means no intermediate checkpoints
+    # if None, use the center of the scene bounding box
+    slice_center: Optional[list] = None
+    # Dump profiling results to `<log_dir>/misc/profiling_stats.yaml` at the end of `train()`.
+    # The per-timer/per-memory-profiler breakdown is only populated when `profiling=True`.
+    # The headline `total_wall_time_s` is recorded unconditionally.
+    final_save_profiling_stats: bool = True
+    # interval to save checkpoints, -1 means no intermediate checkpoints
+    ckpt_interval: int = -1
 
     # ---- profiling and debugging ----
     profiling: bool = False

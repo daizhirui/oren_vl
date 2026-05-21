@@ -78,3 +78,16 @@ class FieldStorageConfig(ConfigABC):
     # Each entry names another *shared* bank whose per-point features are concatenated to this field's own features
     # before the decoding head.
     auxiliary_banks: list[AuxiliaryBankSpec] = field(default_factory=list)
+
+    # ---- Sparse checkpoint storage ----
+    # When True, FieldStorage maintains a `values_used` bool buffer and (for private banks) propagates a
+    # `features_used` bool buffer on its FeatureBank. Each Fuser.scatter / Fuser.gather call OR-marks the
+    # global vertex indices it touched. The state_dict serialization then drops untouched rows from `values`
+    # and `bank.features`, storing only (indices, rows_at_indices). On load, the dense buffer is rebuilt at
+    # the current `octree.capacity` -- untouched rows are reset to `explicit_prior_init` (for `values`) or
+    # the bank's init scheme (for `features`), which is lossless for the default zero-init and lossy in
+    # distribution only for non-zero init schemes (untouched rows received no gradient signal, so the
+    # specific values are irrelevant). Trades a small bookkeeping cost on every fuser call for ~50%
+    # checkpoint shrinkage on scatter modes and significant shrinkage on optimize modes when many vertices
+    # are never gathered. Not currently supported with `shared_bank` (use bank-level tracking instead).
+    track_used_vertices: bool = False
